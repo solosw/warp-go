@@ -41,6 +41,8 @@ export function GetFileDiff(arg1:string):Promise<Record<string, string>>;
 
 export function GetLSPStatus(arg1:string):Promise<lsp.ServerInfo>;
 
+export function GetProjectRunCommands():Promise<Array<config.ProjectRunCommand>>;
+
 export function GetRemoteWorkspaces():Promise<Array<config.RemoteWorkspaceEntry>>;
 
 export function GetSSHConfigs():Promise<Array<config.SSHConfig>>;
@@ -92,6 +94,8 @@ export function SaveAIConfigGroups(arg1:Array<config.AIConfigGroup>):Promise<voi
 export function SaveAppearance(arg1:config.Appearance):Promise<void>;
 
 export function SaveFile(arg1:string,arg2:string):Promise<void>;
+
+export function SaveProjectRunCommands(arg1:Array<config.ProjectRunCommand>):Promise<void>;
 
 export function SaveRemoteWorkspace(arg1:config.RemoteWorkspaceEntry):Promise<void>;
 

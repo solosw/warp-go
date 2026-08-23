@@ -74,6 +74,10 @@ export function GetLSPStatus(arg1) {
   return window['go']['main']['App']['GetLSPStatus'](arg1);
 }
 
+export function GetProjectRunCommands() {
+  return window['go']['main']['App']['GetProjectRunCommands']();
+}
+
 export function GetRemoteWorkspaces() {
   return window['go']['main']['App']['GetRemoteWorkspaces']();
 }
@@ -176,6 +180,10 @@ export function SaveAppearance(arg1) {
 
 export function SaveFile(arg1, arg2) {
   return window['go']['main']['App']['SaveFile'](arg1, arg2);
+}
+
+export function SaveProjectRunCommands(arg1) {
+  return window['go']['main']['App']['SaveProjectRunCommands'](arg1);
 }
 
 export function SaveRemoteWorkspace(arg1) {

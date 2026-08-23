@@ -7,6 +7,9 @@ const emit = defineEmits<{
   (e: 'open-appearance'): void
   (e: 'open-ai-settings'): void
   (e: 'open-browser'): void
+  (e: 'run-project'): void
+  (e: 'open-run-picker'): void
+  (e: 'open-run-settings'): void
 }>()
 
 const ws = useWorkspaceStore()
@@ -109,6 +112,11 @@ async function removeHistory(path: string, e: Event) {
     <div class="bar-spacer"></div>
 
     <div class="bar-actions">
+      <div v-if="ws.hasWorkspace" class="run-group">
+        <button class="btn-run" title="按顺序运行全部命令，每条命令单独打开终端" @click="emit('run-project')">▶ 运行</button>
+        <button class="btn-run-more" title="查看/选择运行命令" @click="emit('open-run-picker')">▾</button>
+        <button class="btn-run-cfg" title="配置本项目运行命令" @click="emit('open-run-settings')">⚙</button>
+      </div>
       <button class="btn-bar" @click="emit('open-browser')" title="打开内置浏览器">浏览器</button>
       <button class="btn-bar" @click="emit('open-appearance')" title="外观设置">外观</button>
       <button class="btn-bar btn-bar-primary" @click="emit('open-ai-settings')" title="AI 配置">AI 配置</button>
@@ -293,4 +301,35 @@ async function removeHistory(path: string, e: Event) {
   font-weight: 600;
 }
 .btn-bar-primary:hover { background: #1d4ed8; }
+.run-group {
+  display: flex;
+  align-items: stretch;
+  margin-right: 4px;
+}
+.btn-run {
+  background: #238636;
+  border: 1px solid #2ea043;
+  border-right: 0;
+  color: #fff;
+  padding: 4px 12px;
+  border-radius: 4px 0 0 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+.btn-run:hover { background: #2ea043; }
+.btn-run-more, .btn-run-cfg {
+  background: #1a7f37;
+  border: 1px solid #2ea043;
+  color: #fff;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.btn-run-more { border-left: 1px solid rgba(255,255,255,0.18); border-radius: 0; }
+.btn-run-cfg {
+  border-left: 1px solid rgba(255,255,255,0.18);
+  border-radius: 0 4px 4px 0;
+}
+.btn-run-more:hover, .btn-run-cfg:hover { background: #2ea043; }
 </style>

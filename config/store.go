@@ -105,7 +105,6 @@ func (s *Store) SaveWorkspace(wsPath string) error {
 	return os.WriteFile(filepath.Join(s.dir, "workspaces.json"), data, 0644)
 }
 
-
 // TerminalSnapshot represents a persisted terminal UI/session snapshot.
 type TerminalSnapshot struct {
 	ID        string `json:"id"`
@@ -143,7 +142,6 @@ func (s *Store) SaveTerminalSnapshots(items []TerminalSnapshot) error {
 	}
 	return os.WriteFile(filepath.Join(s.dir, "terminal-sessions.json"), data, 0644)
 }
-
 
 // AIConfigGroup represents a shared AI configuration profile.
 type AIConfigGroup struct {
@@ -237,6 +235,65 @@ type RemoteWorkspaceEntry struct {
 type StartupCommand struct {
 	Name    string `json:"name"`
 	Command string `json:"command"`
+}
+
+// ProjectRunCommand is a per-workspace run/start command.
+type ProjectRunCommand struct {
+	Name    string `json:"name"`
+	Command string `json:"command"`
+}
+
+func (s *Store) projectRunCommandsPath() string {
+	return filepath.Join(s.dir, "project-run-commands.json")
+}
+
+func (s *Store) loadProjectRunCommandMap() (map[string][]ProjectRunCommand, error) {
+	data, err := os.ReadFile(s.projectRunCommandsPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string][]ProjectRunCommand{}, nil
+		}
+		return nil, err
+	}
+	var items map[string][]ProjectRunCommand
+	if err := json.Unmarshal(data, &items); err != nil {
+		return nil, err
+	}
+	if items == nil {
+		items = map[string][]ProjectRunCommand{}
+	}
+	return items, nil
+}
+
+func (s *Store) LoadProjectRunCommands(workspace string) ([]ProjectRunCommand, error) {
+	if workspace == "" {
+		return nil, nil
+	}
+	items, err := s.loadProjectRunCommandMap()
+	if err != nil {
+		return nil, err
+	}
+	return items[workspace], nil
+}
+
+func (s *Store) SaveProjectRunCommands(workspace string, cmds []ProjectRunCommand) error {
+	if workspace == "" {
+		return os.ErrInvalid
+	}
+	items, err := s.loadProjectRunCommandMap()
+	if err != nil {
+		return err
+	}
+	if len(cmds) == 0 {
+		delete(items, workspace)
+	} else {
+		items[workspace] = cmds
+	}
+	data, err := json.MarshalIndent(items, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(s.projectRunCommandsPath(), data, 0644)
 }
 
 func (s *Store) LoadSSHConfigs() ([]SSHConfig, error) {

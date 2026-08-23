@@ -1,10 +1,23 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { GetStartupCommands } from '../../wailsjs/go/main/App'
 import { config } from '../../wailsjs/go/models'
 
-const emit = defineEmits(['select', 'dismiss', 'settings'])
+const props = withDefaults(defineProps<{ mode?: 'startup' | 'run' }>(), {
+  mode: 'startup',
+})
+const emit = defineEmits<{
+  (e: 'select', cmd: config.StartupCommand): void
+  (e: 'dismiss'): void
+  (e: 'settings'): void
+}>()
 const commands = ref<config.StartupCommand[]>([])
+
+const title = computed(() => props.mode === 'run' ? '运行项目' : '启动命令')
+const emptyHint = computed(() => props.mode === 'run'
+  ? '暂无运行命令，点击“配置”添加 npm start、go run 等'
+  : '暂无启动命令，点击“配置”添加')
+const footerLabel = computed(() => props.mode === 'run' ? '取消' : '跳过，创建空白终端')
 
 onMounted(async () => {
   commands.value = (await GetStartupCommands()) || []
@@ -15,28 +28,28 @@ onMounted(async () => {
   <div class="picker-overlay" @click.self="emit('dismiss')">
     <div class="picker-card">
       <div class="picker-header">
-        <span>启动命令</span>
+        <span>{{ title }}</span>
         <div class="header-actions">
-          <button class="btn-sm" @click="emit('settings')" title="设置">配置</button>
+          <button class="btn-sm" @click="emit('settings')" title="配置运行命令">配置</button>
           <button class="btn-close" @click="emit('dismiss')">&times;</button>
         </div>
       </div>
       <div class="picker-body">
         <div v-if="commands.length === 0" class="empty-hint">
-          暂无启动命令，点击"配置"添加
+          {{ emptyHint }}
         </div>
         <button
           v-for="cmd in commands"
-          :key="cmd.name"
+          :key="`${cmd.name}:${cmd.command}`"
           class="cmd-btn"
           @click="emit('select', cmd)"
         >
-          <span class="cmd-label">{{ cmd.name }}</span>
+          <span class="cmd-label">▶ {{ cmd.name }}</span>
           <code class="cmd-text">{{ cmd.command }}</code>
         </button>
       </div>
       <div class="picker-footer">
-        <button class="btn" @click="emit('dismiss')">跳过，创建空白终端</button>
+        <button class="btn" @click="emit('dismiss')">{{ footerLabel }}</button>
       </div>
     </div>
   </div>
@@ -66,7 +79,7 @@ onMounted(async () => {
   cursor: pointer; text-align: left; transition: background 0.15s, border-color 0.15s;
   color: inherit; font-family: inherit; width: 100%;
 }
-.cmd-btn:hover { background: #2a2a3e; border-color: #58a6ff; }
+.cmd-btn:hover { background: #2a2a3e; border-color: #3fb950; }
 .cmd-label { color: #ddd; font-size: 13px; font-weight: 500; }
 .cmd-text { color: #7a7; font-size: 12px; background: transparent; }
 .btn, .btn-sm {

@@ -2532,6 +2532,29 @@ func (a *App) SaveStartupCommands(cmds []config.StartupCommand) error {
 	return a.cfgStore.SaveStartupCommands(cmds)
 }
 
+// ─── Project Run Commands ──────────────────────────────
+
+func (a *App) GetProjectRunCommands() ([]config.ProjectRunCommand, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.cfgStore == nil || a.workspace == "" {
+		return nil, nil
+	}
+	return a.cfgStore.LoadProjectRunCommands(a.workspace)
+}
+
+func (a *App) SaveProjectRunCommands(cmds []config.ProjectRunCommand) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.cfgStore == nil {
+		return fmt.Errorf("配置存储不可用")
+	}
+	if a.workspace == "" {
+		return fmt.Errorf("未打开工作区")
+	}
+	return a.cfgStore.SaveProjectRunCommands(a.workspace, cmds)
+}
+
 func (a *App) readTerminalOutput(id string, sess *terminal.Session) {
 	buf := make([]byte, 4096)
 	for {

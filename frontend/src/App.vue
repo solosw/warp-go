@@ -3,7 +3,7 @@ import { onMounted, ref, watch } from 'vue'
 import { useWorkspaceStore } from './stores/workspace'
 import { useFileChangesStore } from './stores/fileChanges'
 import { useTerminalStore } from './stores/terminal'
-import { GetStartupWorkspace, CreateTerminal, WriteToTerminal } from '../wailsjs/go/main/App'
+import { GetStartupWorkspace, CreateTerminal, WriteToTerminal, GetProjectRunCommands } from '../wailsjs/go/main/App'
 import { config } from '../wailsjs/go/models'
 import WorkspaceBar from './components/WorkspaceBar.vue'
 import FileTreePanel from './components/FileTreePanel.vue'
@@ -12,6 +12,8 @@ import FilePreviewPanel from './components/FilePreviewPanel.vue'
 import FileChangesPanel from './components/FileChangesPanel.vue'
 import StartupCommandPicker from './components/StartupCommandPicker.vue'
 import StartupCommandSettings from './components/StartupCommandSettings.vue'
+import RunCommandPicker from './components/RunCommandPicker.vue'
+import RunCommandSettings from './components/RunCommandSettings.vue'
 import AIConfigSettings from './components/AIConfigSettings.vue'
 import AppearanceSettings from './components/AppearanceSettings.vue'
 import { useAppearanceStore } from './stores/appearance'
@@ -21,9 +23,11 @@ import { stopAllLSP } from './services/lsp'
 const ws = useWorkspaceStore()
 const term = useTerminalStore()
 const showSettings = ref(false)
+const showRunSettings = ref(false)
 const showAISettings = ref(false)
 const showAppearance = ref(false)
 const showBrowser = ref(false)
+const showRunPicker = ref(false)
 const treeCollapsed = ref(false)
 const changesCollapsed = ref(false)
 const fc = useFileChangesStore()
@@ -34,30 +38,74 @@ function escapeCdPath(p: string) {
   return p.replace(/"/g, '\\"')
 }
 
+function sleep(ms: number) {
+  return new Promise(resolve => window.setTimeout(resolve, ms))
+}
+
+async function runCommandInNewTerminal(cmd: { name: string; command: string }) {
+  const id = await CreateTerminal()
+  if (!id) return
+  term.addSSHTab(id, cmd.name || '运行')
+  await sleep(350)
+  await WriteToTerminal(id, `${cmd.command}\n`)
+  if (ws.info && !ws.info.isRemote) {
+    await WriteToTerminal(id, `cd "${escapeCdPath(ws.info.path)}"\n`)
+  }
+}
+
+async function runCommandsInNewTerminal(cmds: Array<{ name: string; command: string }>) {
+  if (!cmds.length) return
+  for (const cmd of cmds) {
+    if (!cmd.command?.trim()) continue
+    await runCommandInNewTerminal(cmd)
+    await sleep(120)
+  }
+}
+
 async function onPickerSelect(cmd: config.StartupCommand) {
   ws.showStartupPicker = false
-  const id = await CreateTerminal()
-  if (id) {
-    term.addSSHTab(id, cmd.name)
+  await runCommandInNewTerminal(cmd)
+}
 
-    await WriteToTerminal(id, cmd.command + '\n')
-    if (ws.info && !ws.info.isRemote) {
-      await WriteToTerminal(id, 'cd "' + escapeCdPath(ws.info.path) + '"\n')
-    }
-  }
+async function onRunSelect(cmd: config.ProjectRunCommand) {
+  showRunPicker.value = false
+  await runCommandInNewTerminal(cmd)
 }
 
 async function onPickerDismiss() {
   ws.showStartupPicker = false
   const tab = await term.createTerminal()
   if (tab && ws.info && !ws.info.isRemote) {
-    await WriteToTerminal(tab.id, 'cd "' + escapeCdPath(ws.info.path) + '"\n')
+    await sleep(350)
+    await WriteToTerminal(tab.id, `cd "${escapeCdPath(ws.info.path)}"\n`)
   }
 }
 
 function onPickerSettings() {
   showSettings.value = true
   ws.showStartupPicker = false
+}
+
+function openRunPicker() {
+  if (!ws.hasWorkspace) return
+  showRunPicker.value = true
+}
+
+function openRunSettings() {
+  if (!ws.hasWorkspace) return
+  showRunSettings.value = true
+  showRunPicker.value = false
+}
+
+async function runAllProjectCommands() {
+  if (!ws.hasWorkspace) return
+  const cmds = (await GetProjectRunCommands()) || []
+  if (!cmds.length) {
+    openRunSettings()
+    return
+  }
+  showRunPicker.value = false
+  await runCommandsInNewTerminal(cmds)
 }
 
 function onOpenAISettings() {
@@ -128,6 +176,9 @@ onMounted(async () => {
       @open-appearance="onOpenAppearance"
       @open-ai-settings="onOpenAISettings"
       @open-browser="onOpenBrowser"
+      @run-project="runAllProjectCommands"
+      @open-run-picker="openRunPicker"
+      @open-run-settings="openRunSettings"
     />
     <div class="main-area">
       <template v-if="ws.hasWorkspace">
@@ -154,6 +205,17 @@ onMounted(async () => {
     <StartupCommandSettings
       v-if="showSettings"
       @close="showSettings = false"
+    />
+    <RunCommandPicker
+      v-if="showRunPicker"
+      @select="onRunSelect"
+      @run-all="runAllProjectCommands"
+      @dismiss="showRunPicker = false"
+      @settings="openRunSettings"
+    />
+    <RunCommandSettings
+      v-if="showRunSettings"
+      @close="showRunSettings = false"
     />
     <AIConfigSettings
       v-if="showAISettings"

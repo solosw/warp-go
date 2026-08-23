@@ -71,6 +71,20 @@ export namespace config {
 	    }
 	}
 	
+	export class ProjectRunCommand {
+	    name: string;
+	    command: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProjectRunCommand(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.command = source["command"];
+	    }
+	}
 	export class RemoteWorkspaceEntry {
 	    name: string;
 	    host: string;

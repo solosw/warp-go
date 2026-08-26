@@ -2555,16 +2555,62 @@ func (a *App) SaveProjectRunCommands(cmds []config.ProjectRunCommand) error {
 	return a.cfgStore.SaveProjectRunCommands(a.workspace, cmds)
 }
 
+const (
+	terminalReadBufferSize = 32 * 1024
+	terminalEmitBufferSize = 64 * 1024
+	terminalEmitInterval   = 8 * time.Millisecond
+)
+
+type terminalReadResult struct {
+	data []byte
+	err  error
+}
+
 func (a *App) readTerminalOutput(id string, sess *terminal.Session) {
-	buf := make([]byte, 4096)
-	for {
-		n, err := sess.Read(buf)
-		if err != nil {
-			runtime.EventsEmit(a.ctx, "terminal-output:"+id, "\r\n[终端已关闭]")
+	results := make(chan terminalReadResult, 4)
+	go func() {
+		buf := make([]byte, terminalReadBufferSize)
+		for {
+			n, err := sess.Read(buf)
+			if n > 0 {
+				data := append([]byte(nil), buf[:n]...)
+				results <- terminalReadResult{data: data}
+			}
+			if err != nil {
+				results <- terminalReadResult{err: err}
+				return
+			}
+		}
+	}()
+
+	ticker := time.NewTicker(terminalEmitInterval)
+	defer ticker.Stop()
+	var pending strings.Builder
+	flush := func() {
+		if pending.Len() == 0 {
 			return
 		}
-		if n > 0 {
-			runtime.EventsEmit(a.ctx, "terminal-output:"+id, string(buf[:n]))
+		runtime.EventsEmit(a.ctx, "terminal-output:"+id, pending.String())
+		pending.Reset()
+	}
+
+	for {
+		select {
+		case result := <-results:
+			if len(result.data) > 0 {
+				pending.Write(result.data)
+				if pending.Len() >= terminalEmitBufferSize {
+					flush()
+				}
+			}
+			if result.err != nil {
+				flush()
+				_ = a.termMgr.Close(id)
+				runtime.EventsEmit(a.ctx, "terminal-output:"+id, "\r\n[终端已关闭]")
+				return
+			}
+		case <-ticker.C:
+			flush()
 		}
 	}
 }

@@ -41,6 +41,24 @@ const tab = computed(() => store.tabs.find(t => t.id === props.tabId) || null)
 let term: Terminal | null = null
 let fitAddon: FitAddon | null = null
 let unsubscribe: (() => void) | null = null
+let resizeObserver: ResizeObserver | null = null
+let fitFrame: number | null = null
+
+function scheduleFit() {
+  if (fitFrame !== null) return
+  fitFrame = requestAnimationFrame(() => {
+    fitFrame = null
+    const el = termEl.value
+    if (!fitAddon || !el || el.offsetParent === null) return
+    try { fitAddon.fit() } catch {}
+  })
+}
+
+function observeTerminal(el: HTMLDivElement) {
+  scheduleFit()
+  resizeObserver = new ResizeObserver(scheduleFit)
+  resizeObserver.observe(el)
+}
 
 onMounted(async () => {
   await nextTick()
@@ -61,11 +79,7 @@ onMounted(async () => {
     term.open(el)
     term.write('[2J[H')
     term.write(tab.value.output || '[无输出]')
-    requestAnimationFrame(() => {
-      if (fitAddon && el.offsetParent !== null) {
-        try { fitAddon.fit() } catch {}
-      }
-    })
+    observeTerminal(el)
     return
   }
 
@@ -81,12 +95,7 @@ onMounted(async () => {
   fitAddon = new FitAddon()
   term.loadAddon(fitAddon)
   term.open(el)
-
-  requestAnimationFrame(() => {
-    if (fitAddon && el.offsetParent !== null) {
-      try { fitAddon.fit() } catch {}
-    }
-  })
+  observeTerminal(el)
 
   unsubscribe = store.subscribeTerminal(props.tabId, (data: string) => {
     term?.write(data)
@@ -99,13 +108,6 @@ onMounted(async () => {
   term.onResize(({ cols, rows }) => {
     store.resizeTerminal(props.tabId, cols, rows)
   })
-
-  const observer = new ResizeObserver(() => {
-    if (fitAddon && el.offsetParent !== null) {
-      try { fitAddon.fit() } catch {}
-    }
-  })
-  observer.observe(el)
 })
 
 // Repaint the xterm canvas when the user drags the panel-opacity slider.
@@ -145,7 +147,11 @@ function quoteDroppedPath(path: string): string {
 
 onUnmounted(() => {
   unsubscribe?.()
+  resizeObserver?.disconnect()
+  if (fitFrame !== null) cancelAnimationFrame(fitFrame)
   term?.dispose()
+  term = null
+  fitAddon = null
 })
 </script>
 

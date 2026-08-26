@@ -19,6 +19,8 @@ export interface TabItem {
 }
 
 const MAX_OUTPUT = 200 * 1024
+const OUTPUT_FLUSH_DELAY = 250
+const OUTPUT_SAVE_DELAY = 5000
 
 export const useTerminalStore = defineStore('terminal', () => {
   const ws = useWorkspaceStore()
@@ -27,8 +29,13 @@ export const useTerminalStore = defineStore('terminal', () => {
   const activeTab = computed(() => tabs.value.find(t => t.id === activeTabId.value) || null)
   const error = ref<string | null>(null)
   const layoutMode = ref<'tabs' | 'grid'>('tabs')
+  const pendingOutputs = new Map<string, string>()
   let counter = 0
   let saveTimer: number | null = null
+  let outputFlushTimer: number | null = null
+  let outputSaveTimer: number | null = null
+  let saveInProgress = false
+  let saveRequested = false
 
   function trimOutput(text: string) {
     return text.length > MAX_OUTPUT ? text.slice(text.length - MAX_OUTPUT) : text
@@ -42,20 +49,61 @@ export const useTerminalStore = defineStore('terminal', () => {
     }, 1000)
   }
 
+  function scheduleOutputSave() {
+    if (outputSaveTimer !== null) return
+    outputSaveTimer = window.setTimeout(() => {
+      outputSaveTimer = null
+      persistSnapshots()
+    }, OUTPUT_SAVE_DELAY)
+  }
+
+  function flushTerminalOutput(tabId: string) {
+    const data = pendingOutputs.get(tabId)
+    if (!data) return
+    pendingOutputs.delete(tabId)
+    const tab = tabs.value.find(t => t.id === tabId)
+    if (!tab) return
+    tab.output = trimOutput((tab.output || '') + data)
+    scheduleOutputSave()
+  }
+
+  function flushPendingOutputs() {
+    outputFlushTimer = null
+    for (const id of pendingOutputs.keys()) flushTerminalOutput(id)
+  }
+
+  function queueOutput(tabId: string, data: string) {
+    pendingOutputs.set(tabId, trimOutput((pendingOutputs.get(tabId) || '') + data))
+    if (outputFlushTimer !== null) return
+    outputFlushTimer = window.setTimeout(flushPendingOutputs, OUTPUT_FLUSH_DELAY)
+  }
+
   async function persistSnapshots() {
-    const snapshots = tabs.value.map(t => new config.TerminalSnapshot({
-      id: t.id,
-      title: t.title,
-      type: t.type,
-      workspace: ws.info?.path || (tabs.value[0]?.cwd || ''),
-      cwd: t.cwd,
-      sshName: t.sshName || '',
-      output: t.output || '',
-      restored: !!t.restored,
-      active: t.id === activeTabId.value,
-      updatedAt: new Date().toISOString()
-    }))
-    try { await SaveTerminalSnapshots(snapshots as any) } catch {}
+    if (saveInProgress) {
+      saveRequested = true
+      return
+    }
+    saveInProgress = true
+    try {
+      do {
+        saveRequested = false
+        const snapshots = tabs.value.map(t => new config.TerminalSnapshot({
+          id: t.id,
+          title: t.title,
+          type: t.type,
+          workspace: ws.info?.path || (tabs.value[0]?.cwd || ''),
+          cwd: t.cwd,
+          sshName: t.sshName || '',
+          output: t.output || '',
+          restored: !!t.restored,
+          active: t.id === activeTabId.value,
+          updatedAt: new Date().toISOString()
+        }))
+        try { await SaveTerminalSnapshots(snapshots as any) } catch {}
+      } while (saveRequested)
+    } finally {
+      saveInProgress = false
+    }
   }
 
   async function loadSnapshots() {
@@ -102,6 +150,7 @@ export const useTerminalStore = defineStore('terminal', () => {
     const tab = tabs.value.find(t => t.id === id)
     if (!tab) return
     tab.error = ''
+    pendingOutputs.delete(id)
     try {
       const snap = new config.TerminalSnapshot({
         id: tab.id,
@@ -129,11 +178,13 @@ export const useTerminalStore = defineStore('terminal', () => {
   }
 
   async function closeTab(id: string) {
+    flushTerminalOutput(id)
     const tab = tabs.value.find(t => t.id === id)
     if (tab && !tab.restored) {
       try { await CloseTerminal(id) } catch {}
       EventsOff('terminal-output:' + id)
     }
+    pendingOutputs.delete(id)
     const idx = tabs.value.findIndex(t => t.id === id)
     if (idx !== -1) tabs.value.splice(idx, 1)
     if (activeTabId.value === id) {
@@ -154,10 +205,8 @@ export const useTerminalStore = defineStore('terminal', () => {
   }
 
   function appendOutput(tabId: string, data: string) {
-    const tab = tabs.value.find(t => t.id === tabId)
-    if (!tab) return
-    tab.output = trimOutput((tab.output || '') + data)
-    scheduleSave()
+    if (!tabs.value.some(t => t.id === tabId)) return
+    queueOutput(tabId, data)
   }
 
   function writeToTerminal(tabId: string, data: string) { WriteToTerminal(tabId, data) }
@@ -165,11 +214,10 @@ export const useTerminalStore = defineStore('terminal', () => {
 
   function subscribeTerminal(id: string, handler: (data: string) => void): () => void {
     const eventName = 'terminal-output:' + id
-    EventsOn(eventName, (data: string) => {
+    return EventsOn(eventName, (data: string) => {
       appendOutput(id, data)
       handler(data)
     })
-    return () => EventsOff(eventName)
   }
 
   function toggleLayout() {

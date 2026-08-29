@@ -54,6 +54,32 @@ export namespace config {
 		    return a;
 		}
 	}
+	export class AcpAgentConfig {
+	    id: string;
+	    name: string;
+	    command: string;
+	    args: string[];
+	    env?: Record<string, string>;
+	    remoteCommand?: string;
+	    remoteArgs?: string[];
+	    isDefault?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new AcpAgentConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.command = source["command"];
+	        this.args = source["args"];
+	        this.env = source["env"];
+	        this.remoteCommand = source["remoteCommand"];
+	        this.remoteArgs = source["remoteArgs"];
+	        this.isDefault = source["isDefault"];
+	    }
+	}
 	export class Appearance {
 	    backgroundImage: string;
 	    backgroundOpacity: number;
@@ -231,6 +257,28 @@ export namespace main {
 	        this.claudeCode = source["claudeCode"];
 	        this.codex = source["codex"];
 	        this.openCode = source["openCode"];
+	    }
+	}
+	export class AcpSessionInfo {
+	    id: string;
+	    title: string;
+	    mode: string;
+	    agent: string;
+	    cwd: string;
+	    status: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AcpSessionInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.title = source["title"];
+	        this.mode = source["mode"];
+	        this.agent = source["agent"];
+	        this.cwd = source["cwd"];
+	        this.status = source["status"];
 	    }
 	}
 	export class RemoteDirEntry {

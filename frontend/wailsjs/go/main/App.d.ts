@@ -11,9 +11,15 @@ export function AcceptFile(arg1:string):Promise<void>;
 
 export function ApplyAIConfigGroup(arg1:config.AIConfigGroup,arg2:string):Promise<void>;
 
+export function CancelAcpPrompt(arg1:string):Promise<void>;
+
+export function CloseAcpSession(arg1:string):Promise<void>;
+
 export function CloseTerminal(arg1:string):Promise<void>;
 
 export function CopyWorkspacePaths(arg1:Array<string>,arg2:string):Promise<void>;
+
+export function CreateAcpSession(arg1:string):Promise<main.AcpSessionInfo>;
 
 export function CreateSSHTerminal(arg1:main.SSHConfig):Promise<string>;
 
@@ -28,6 +34,8 @@ export function DeleteWorkspaceFile(arg1:string):Promise<void>;
 export function DetectAIToolConfigPaths():Promise<main.AIToolPaths>;
 
 export function GetAIConfigGroups():Promise<Array<config.AIConfigGroup>>;
+
+export function GetAcpAgents():Promise<Array<config.AcpAgentConfig>>;
 
 export function GetAppearance():Promise<config.Appearance>;
 
@@ -85,11 +93,15 @@ export function ReplaceWorkspace(arg1:string,arg2:string,arg3:boolean):Promise<A
 
 export function ResizeTerminal(arg1:string,arg2:number,arg3:number):Promise<void>;
 
+export function RespondAcpPermission(arg1:string,arg2:string,arg3:string):Promise<void>;
+
 export function RevertAll():Promise<void>;
 
 export function RevertFile(arg1:string):Promise<void>;
 
 export function SaveAIConfigGroups(arg1:Array<config.AIConfigGroup>):Promise<void>;
+
+export function SaveAcpAgents(arg1:Array<config.AcpAgentConfig>):Promise<void>;
 
 export function SaveAppearance(arg1:config.Appearance):Promise<void>;
 
@@ -111,7 +123,11 @@ export function SelectBackgroundImage():Promise<string>;
 
 export function SelectWorkspace():Promise<main.WorkspaceInfo>;
 
+export function SendAcpPrompt(arg1:string,arg2:string):Promise<void>;
+
 export function SendLSPMessage(arg1:string,arg2:string):Promise<void>;
+
+export function SetAcpSessionMode(arg1:string,arg2:string):Promise<void>;
 
 export function StartLSP(arg1:string):Promise<void>;
 

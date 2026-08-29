@@ -19,6 +19,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/crypto/ssh"
 
+	"aimuxterm/acp"
 	"aimuxterm/config"
 	"aimuxterm/lsp"
 	"aimuxterm/scanner"
@@ -157,6 +158,7 @@ type App struct {
 
 	snapEng  *snapshot.Engine
 	termMgr  *terminal.Manager
+	acpMgr   *acp.Manager
 	fsw      *watcher.Watcher
 	cfgStore *config.Store
 
@@ -180,6 +182,12 @@ func NewApp() *App {
 		termMgr:  terminal.NewManager(),
 		cfgStore: store,
 	}
+	app.acpMgr = acp.NewManager(func(ev acp.Event) {
+		if app.ctx == nil {
+			return
+		}
+		runtime.EventsEmit(app.ctx, "acp-event:"+ev.SessionID, ev)
+	})
 	app.lspMgr = lsp.NewManager(func(language string, body []byte) {
 		if app.ctx != nil {
 			runtime.EventsEmit(app.ctx, "lsp-message:"+language, string(body))
@@ -204,6 +212,9 @@ func (a *App) OpenInNewWindow(path string) error {
 
 func (a *App) shutdown(ctx context.Context) {
 	a.termMgr.CloseAll()
+	if a.acpMgr != nil {
+		a.acpMgr.CloseAll()
+	}
 	if a.lspMgr != nil {
 		a.lspMgr.StopAll()
 	}
@@ -2564,6 +2575,149 @@ const (
 type terminalReadResult struct {
 	data []byte
 	err  error
+}
+
+// ─── ACP ─────────────────────────────────────────────
+
+type AcpSessionInfo struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Mode   string `json:"mode"`
+	Agent  string `json:"agent"`
+	Cwd    string `json:"cwd"`
+	Status string `json:"status"`
+}
+
+func (a *App) GetAcpAgents() ([]config.AcpAgentConfig, error) {
+	if a.cfgStore == nil {
+		return nil, nil
+	}
+	return a.cfgStore.LoadAcpAgents()
+}
+
+func (a *App) SaveAcpAgents(items []config.AcpAgentConfig) error {
+	if a.cfgStore == nil {
+		return fmt.Errorf("配置存储不可用")
+	}
+	return a.cfgStore.SaveAcpAgents(items)
+}
+
+func (a *App) CreateAcpSession(agentID string) (AcpSessionInfo, error) {
+	var empty AcpSessionInfo
+	if a.acpMgr == nil {
+		return empty, fmt.Errorf("ACP 未初始化")
+	}
+	agents, err := a.GetAcpAgents()
+	if err != nil {
+		return empty, err
+	}
+	if len(agents) == 0 {
+		return empty, fmt.Errorf("请先在设置中配置 ACP Agent 命令")
+	}
+	var cfg *config.AcpAgentConfig
+	if agentID != "" {
+		for i := range agents {
+			if agents[i].ID == agentID || agents[i].Name == agentID {
+				cfg = &agents[i]
+				break
+			}
+		}
+		if cfg == nil {
+			return empty, fmt.Errorf("找不到 ACP Agent: %s", agentID)
+		}
+	} else {
+		for i := range agents {
+			if agents[i].IsDefault {
+				cfg = &agents[i]
+				break
+			}
+		}
+		if cfg == nil {
+			cfg = &agents[0]
+		}
+	}
+	if strings.TrimSpace(cfg.Command) == "" && strings.TrimSpace(cfg.RemoteCommand) == "" {
+		return empty, fmt.Errorf("Agent 命令为空")
+	}
+
+	a.mu.Lock()
+	isRemote := a.isRemote
+	cwd := a.workspace
+	remotePath := a.remotePath
+	sshCfg := a.remoteSSHCfg
+	a.mu.Unlock()
+
+	opts := acp.CreateOptions{
+		Launch: acp.LaunchFromConfig(*cfg),
+		Title:  cfg.Name,
+	}
+	if isRemote {
+		if sshCfg.Host == "" {
+			return empty, fmt.Errorf("远程工作区未连接")
+		}
+		opts.Mode = "remote"
+		opts.Cwd = remotePath
+		opts.SSH = &acp.SSHParams{
+			Host:     sshCfg.Host,
+			Port:     sshCfg.Port,
+			User:     sshCfg.User,
+			Password: sshCfg.Password,
+			KeyPath:  sshCfg.KeyPath,
+		}
+	} else {
+		opts.Mode = "local"
+		opts.Cwd = cwd
+	}
+	sess, err := a.acpMgr.Create(opts)
+	if err != nil {
+		return empty, err
+	}
+	return AcpSessionInfo{
+		ID:     sess.ID,
+		Title:  sess.Title,
+		Mode:   sess.Mode,
+		Agent:  sess.Agent,
+		Cwd:    sess.Cwd,
+		Status: sess.Status,
+	}, nil
+}
+
+func (a *App) CloseAcpSession(id string) error {
+	if a.acpMgr == nil {
+		return nil
+	}
+	return a.acpMgr.Close(id)
+}
+
+func (a *App) SendAcpPrompt(id, text string) error {
+	if a.acpMgr == nil {
+		return fmt.Errorf("ACP 未初始化")
+	}
+	return a.acpMgr.Prompt(id, text)
+}
+
+func (a *App) RespondAcpPermission(id, requestID, optionID string) error {
+	if a.acpMgr == nil {
+		return fmt.Errorf("ACP not initialized")
+	}
+	if strings.TrimSpace(optionID) == "" {
+		optionID = "reject"
+	}
+	return a.acpMgr.RespondPermission(id, requestID, optionID)
+}
+
+func (a *App) CancelAcpPrompt(id string) error {
+	if a.acpMgr == nil {
+		return fmt.Errorf("ACP not initialized")
+	}
+	return a.acpMgr.Cancel(id)
+}
+
+func (a *App) SetAcpSessionMode(id, modeID string) error {
+	if a.acpMgr == nil {
+		return fmt.Errorf("ACP not initialized")
+	}
+	return a.acpMgr.SetMode(id, modeID)
 }
 
 func (a *App) readTerminalOutput(id string, sess *terminal.Session) {

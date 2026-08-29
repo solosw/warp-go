@@ -143,6 +143,45 @@ func (s *Store) SaveTerminalSnapshots(items []TerminalSnapshot) error {
 	return os.WriteFile(filepath.Join(s.dir, "terminal-sessions.json"), data, 0644)
 }
 
+// AcpAgentConfig is a user-defined ACP agent launch command.
+type AcpAgentConfig struct {
+	ID            string            `json:"id"`
+	Name          string            `json:"name"`
+	Command       string            `json:"command"`
+	Args          []string          `json:"args"`
+	Env           map[string]string `json:"env,omitempty"`
+	RemoteCommand string            `json:"remoteCommand,omitempty"`
+	RemoteArgs    []string          `json:"remoteArgs,omitempty"`
+	IsDefault     bool              `json:"isDefault,omitempty"`
+}
+
+func (s *Store) LoadAcpAgents() ([]AcpAgentConfig, error) {
+	path := filepath.Join(s.dir, "acp-agents.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var items []AcpAgentConfig
+	if err := json.Unmarshal(data, &items); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (s *Store) SaveAcpAgents(items []AcpAgentConfig) error {
+	if items == nil {
+		items = []AcpAgentConfig{}
+	}
+	data, err := json.MarshalIndent(items, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(s.dir, "acp-agents.json"), data, 0644)
+}
+
 // AIConfigGroup represents a shared AI configuration profile.
 type AIConfigGroup struct {
 	Name       string          `json:"name"`

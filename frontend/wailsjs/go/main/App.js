@@ -14,12 +14,24 @@ export function ApplyAIConfigGroup(arg1, arg2) {
   return window['go']['main']['App']['ApplyAIConfigGroup'](arg1, arg2);
 }
 
+export function CancelAcpPrompt(arg1) {
+  return window['go']['main']['App']['CancelAcpPrompt'](arg1);
+}
+
+export function CloseAcpSession(arg1) {
+  return window['go']['main']['App']['CloseAcpSession'](arg1);
+}
+
 export function CloseTerminal(arg1) {
   return window['go']['main']['App']['CloseTerminal'](arg1);
 }
 
 export function CopyWorkspacePaths(arg1, arg2) {
   return window['go']['main']['App']['CopyWorkspacePaths'](arg1, arg2);
+}
+
+export function CreateAcpSession(arg1) {
+  return window['go']['main']['App']['CreateAcpSession'](arg1);
 }
 
 export function CreateSSHTerminal(arg1) {
@@ -48,6 +60,10 @@ export function DetectAIToolConfigPaths() {
 
 export function GetAIConfigGroups() {
   return window['go']['main']['App']['GetAIConfigGroups']();
+}
+
+export function GetAcpAgents() {
+  return window['go']['main']['App']['GetAcpAgents']();
 }
 
 export function GetAppearance() {
@@ -162,6 +178,10 @@ export function ResizeTerminal(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResizeTerminal'](arg1, arg2, arg3);
 }
 
+export function RespondAcpPermission(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RespondAcpPermission'](arg1, arg2, arg3);
+}
+
 export function RevertAll() {
   return window['go']['main']['App']['RevertAll']();
 }
@@ -172,6 +192,10 @@ export function RevertFile(arg1) {
 
 export function SaveAIConfigGroups(arg1) {
   return window['go']['main']['App']['SaveAIConfigGroups'](arg1);
+}
+
+export function SaveAcpAgents(arg1) {
+  return window['go']['main']['App']['SaveAcpAgents'](arg1);
 }
 
 export function SaveAppearance(arg1) {
@@ -214,8 +238,16 @@ export function SelectWorkspace() {
   return window['go']['main']['App']['SelectWorkspace']();
 }
 
+export function SendAcpPrompt(arg1, arg2) {
+  return window['go']['main']['App']['SendAcpPrompt'](arg1, arg2);
+}
+
 export function SendLSPMessage(arg1, arg2) {
   return window['go']['main']['App']['SendLSPMessage'](arg1, arg2);
+}
+
+export function SetAcpSessionMode(arg1, arg2) {
+  return window['go']['main']['App']['SetAcpSessionMode'](arg1, arg2);
 }
 
 export function StartLSP(arg1) {

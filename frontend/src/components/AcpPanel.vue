@@ -559,7 +559,8 @@ const timelineItems = computed(() => (tab.value?.items || []).filter(it => it.ki
 .acp-messages {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 12px 14px 16px;
   display: flex;
   flex-direction: column;
@@ -583,9 +584,11 @@ const timelineItems = computed(() => (tab.value?.items || []).filter(it => it.ki
 }
 .acp-msg {
   max-width: 100%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  box-sizing: border-box;
 }
 .acp-msg.user {
   align-self: flex-end;
@@ -594,8 +597,9 @@ const timelineItems = computed(() => (tab.value?.items || []).filter(it => it.ki
 }
 .acp-msg.assistant,
 .acp-msg.system {
-  align-self: stretch;
-  width: 100%;
+  align-self: flex-start;
+  width: 90%;
+  max-width: 90%;
 }
 .acp-msg-head {
   display: flex;
@@ -649,7 +653,13 @@ const timelineItems = computed(() => (tab.value?.items || []).filter(it => it.ki
   padding: 10px 12px;
   font-size: 13px;
   line-height: 1.55;
+  overflow-wrap: anywhere;
   word-break: break-word;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: hidden;
   box-shadow: 0 1px 0 rgba(255,255,255,0.03) inset;
 }
 .acp-msg.user .user-bubble {
@@ -663,13 +673,88 @@ const timelineItems = computed(() => (tab.value?.items || []).filter(it => it.ki
 }
 .acp-user-text {
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   margin: 0;
   color: #e6edf3;
 }
 .acp-msg.assistant .acp-bubble.md {
-  background: #161b22;
-  border: 1px solid #30363d;
+  background: rgba(22, 27, 34, .78);
+  border: 1px solid rgba(139, 179, 232, .18);
   border-radius: 12px 12px 12px 4px;
+  box-shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 8px 20px rgba(0,0,0,.12);
+}
+.acp-msg.assistant .acp-bubble.md :deep(p),
+.acp-msg.assistant .acp-bubble.md :deep(li),
+.acp-msg.assistant .acp-bubble.md :deep(h1),
+.acp-msg.assistant .acp-bubble.md :deep(h2),
+.acp-msg.assistant .acp-bubble.md :deep(h3),
+.acp-msg.assistant .acp-bubble.md :deep(h4),
+.acp-msg.assistant .acp-bubble.md :deep(h5),
+.acp-msg.assistant .acp-bubble.md :deep(h6),
+.acp-msg.assistant .acp-bubble.md :deep(a),
+.acp-msg.assistant .acp-bubble.md :deep(th),
+.acp-msg.assistant .acp-bubble.md :deep(td),
+.acp-msg.assistant .acp-bubble.md :deep(blockquote) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.acp-msg.assistant .acp-bubble.md :deep(> *:first-child) { margin-top: 0; }
+.acp-msg.assistant .acp-bubble.md :deep(> *:last-child) { margin-bottom: 0; }
+.acp-msg.assistant .acp-bubble.md :deep(p),
+.acp-msg.assistant .acp-bubble.md :deep(ul),
+.acp-msg.assistant .acp-bubble.md :deep(ol) { margin: 0 0 8px; }
+.acp-msg.assistant .acp-bubble.md :deep(ul),
+.acp-msg.assistant .acp-bubble.md :deep(ol) { padding-left: 1.35em; }
+.acp-msg.assistant .acp-bubble.md :deep(li) { margin: 2px 0; }
+.acp-msg.assistant .acp-bubble.md :deep(li > ul),
+.acp-msg.assistant .acp-bubble.md :deep(li > ol) { margin: 2px 0; }
+.acp-msg.assistant .acp-bubble.md :deep(blockquote) {
+  margin: 0 0 8px;
+  padding: 4px 0 4px 10px;
+  border-left: 3px solid rgba(139, 179, 232, .28);
+  color: #9da7b3;
+}
+.acp-msg.assistant .acp-bubble.md :deep(pre) {
+  width: auto;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  padding: 8px 10px;
+  margin: 0 0 8px;
+  border-radius: 8px;
+  background: rgba(1, 6, 14, .45);
+}
+.acp-msg.assistant .acp-bubble.md :deep(pre code),
+.acp-msg.assistant .acp-bubble.md :deep(pre code.hljs) {
+  display: block;
+  width: auto;
+  max-width: none;
+  padding: 0;
+  background: transparent;
+  white-space: inherit;
+  overflow-wrap: inherit;
+  word-break: inherit;
+}
+.acp-msg.assistant .acp-bubble.md :deep(code) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.acp-msg.assistant .acp-bubble.md :deep(table) {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0 0 8px;
+}
+.acp-msg.assistant .acp-bubble.md :deep(img),
+.acp-msg.assistant .acp-bubble.md :deep(svg),
+.acp-msg.assistant .acp-bubble.md :deep(video) {
+  max-width: 100%;
+  height: auto;
 }
 .acp-msg.assistant.streaming .acp-bubble.md {
   border-color: #238636;

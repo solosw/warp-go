@@ -445,21 +445,18 @@ func (a *App) ListRemoteDir(dir string) ([]RemoteDirEntry, error) {
 		return nil, fmt.Errorf("读取远程目录失败: %w", err)
 	}
 	var entries []RemoteDirEntry
-	if dir != "" {
-		parent := path.Dir(dir)
-		if parent == "." {
-			parent = ""
-		}
-		entries = append(entries, RemoteDirEntry{Name: "..", Path: parent, IsDir: true})
-	}
 	for _, info := range infos {
-		entryPath := path.Join(dir, info.Name())
+		name := info.Name()
+		if name == "." || name == ".." {
+			continue
+		}
+		entryPath := path.Join(dir, name)
 		if a.isRemoteHidden(entryPath, info.IsDir()) {
 			continue
 		}
 		binary := !info.IsDir() && (isRemoteBinaryExt(entryPath) || info.Size() > maxRemoteTextSize)
 		entries = append(entries, RemoteDirEntry{
-			Name:     info.Name(),
+			Name:     name,
 			Path:     entryPath,
 			IsDir:    info.IsDir(),
 			Size:     info.Size(),
@@ -537,6 +534,26 @@ func (a *App) OpenRemoteWorkspace(cfg SSHConfig, remotePath string) (*WorkspaceI
 
 	a.remotePath = remotePath
 	a.remoteSFTP = sftpClient
+	a.remoteClient = client
+	a.remoteSFTP = sftpClient
+	a.remotePath = remotePath
+	a.isRemote = true
+	a.workspace = workspaceName(cfg.Name, remotePath)
+	a.remoteSSHCfg = tCfg
+	a.scannedOtherFiles = nil // remote tree loads lazily via ListRemoteDir
+	a.snapEng = snapshot.NewEngine(remotePath)
+
+	// Ensure .warp-snapshots/ exists on remote before scanning / snapshotting.
+	snapDir := path.Join(a.remotePath, ".warp-snapshots")
+	if err := sftpClient.MkdirAll(snapDir); err != nil {
+		sftpClient.Close()
+		client.Close()
+		return nil, fmt.Errorf("创建远程快照目录失败: %w", err)
+	}
+
+	// Mutate .gitignore first so the subsequent scan baselines the post-fix mtime/size.
+	a.remoteEnsureGitignore()
+
 	if giData, err := a.readRemoteFileRaw(path.Join(remotePath, ".gitignore")); err == nil {
 		a.remoteGitignore = scanner.ParseGitignore(string(giData))
 	} else {
@@ -550,27 +567,8 @@ func (a *App) OpenRemoteWorkspace(cfg SSHConfig, remotePath string) (*WorkspaceI
 		client.Close()
 		return nil, fmt.Errorf("扫描远程目录失败: %w", err)
 	}
-
-	a.remoteClient = client
-	a.remoteSFTP = sftpClient
-	a.remotePath = remotePath
-	a.isRemote = true
-	a.workspace = workspaceName(cfg.Name, remotePath)
-	a.remoteSSHCfg = tCfg
 	a.scannedRemoteEntries = entries
 	a.scannedFiles = entriesToPaths(entries)
-	a.scannedOtherFiles = nil // remote tree loads lazily via ListRemoteDir
-	a.snapEng = snapshot.NewEngine(remotePath)
-
-	// Ensure .warp-snapshots/ exists on remote
-	snapDir := path.Join(a.remotePath, ".warp-snapshots")
-	if err := sftpClient.MkdirAll(snapDir); err != nil {
-		sftpClient.Close()
-		client.Close()
-		return nil, fmt.Errorf("创建远程快照目录失败: %w", err)
-	}
-
-	a.remoteEnsureGitignore()
 
 	// Load manifest from remote; if absent init fresh
 	if err := a.remoteLoadManifest(); err != nil {
@@ -642,6 +640,8 @@ func (a *App) RefreshRemoteWorkspace() (*WorkspaceInfo, error) {
 	}
 	a.scannedRemoteEntries = entries
 	a.scannedFiles = entriesToPaths(entries)
+	a.cachedChanges = nil
+	a.changesCached = false
 	info := a.makeWorkspaceInfo()
 	a.emitChanges()
 	return info, nil
@@ -855,29 +855,38 @@ func (a *App) remoteInitSnapshots(entries []remoteFileEntry) error {
 		chunk := textPaths[i:end]
 		mapping, err := a.remoteExecCopyChunk(chunk)
 		if err != nil {
-			for _, p := range chunk {
-				data, err := a.readRemoteFile(p)
+			for _, te := range textEntries[i:end] {
+				data, err := a.readRemoteFile(te.path)
 				if err != nil {
 					continue
 				}
-				if err := a.remoteWriteSnapshot(p, data); err != nil {
+				if err := a.remoteWriteSnapshot(te.path, data); err != nil {
 					return err
 				}
+				a.snapEng.SetFileFingerprint(te.path, te.fp)
 			}
 		} else {
-			for path, sha256 := range mapping {
-				a.snapEng.SetFileHash(path, sha256)
-				for _, te := range textEntries {
-					if te.path == path {
-						a.snapEng.SetFileFingerprint(path, te.fp)
-						break
-					}
+			fpByPath := make(map[string]string, end-i)
+			for _, te := range textEntries[i:end] {
+				fpByPath[te.path] = te.fp
+			}
+			for pth, sha := range mapping {
+				a.snapEng.SetFileHash(pth, sha)
+				if fp, ok := fpByPath[pth]; ok {
+					a.snapEng.SetFileFingerprint(pth, fp)
 				}
 			}
 		}
 		runtime.EventsEmit(a.ctx, "snapshot-progress", map[string]interface{}{
 			"phase": "progress", "total": len(textPaths), "current": end,
 		})
+	}
+
+	// Ensure every text file has a fingerprint so modification detection uses size|mtime.
+	for _, te := range textEntries {
+		if _, ok := a.snapEng.GetFileFingerprint(te.path); !ok {
+			a.snapEng.SetFileFingerprint(te.path, te.fp)
+		}
 	}
 
 	return a.remoteSaveManifest()
@@ -965,6 +974,8 @@ func (a *App) remotePoll() {
 	}
 	a.scannedRemoteEntries = entries
 	a.scannedFiles = entriesToPaths(entries)
+	a.cachedChanges = nil
+	a.changesCached = false
 	a.emitChanges()
 }
 
@@ -1099,18 +1110,31 @@ func (a *App) AcceptAll() error {
 		fps := entriesToFingerprints(a.scannedRemoteEntries)
 		changes := a.snapEng.ChangedFilesByHash(fps)
 		for _, c := range changes {
+			if c.Status == snapshot.StatusDeleted {
+				_ = a.remoteRemoveSnapshot(c.Path)
+				_ = a.snapEng.RemoveFromManifest([]string{c.Path})
+				continue
+			}
+			fp := fps[c.Path]
 			if a.remoteIsBinary(c.Path) {
-				a.snapEng.SetFileFingerprint(c.Path, fps[c.Path])
+				if fp != "" {
+					a.snapEng.SetFileFingerprint(c.Path, fp)
+				}
 				continue
 			}
 			data, err := a.readRemoteFile(c.Path)
 			if err != nil {
+				// File vanished between scan and accept — drop baseline entry.
+				_ = a.remoteRemoveSnapshot(c.Path)
+				_ = a.snapEng.RemoveFromManifest([]string{c.Path})
 				continue
 			}
 			if err := a.remoteWriteSnapshot(c.Path, data); err != nil {
 				return err
 			}
-			a.snapEng.SetFileFingerprint(c.Path, fps[c.Path])
+			if fp != "" {
+				a.snapEng.SetFileFingerprint(c.Path, fp)
+			}
 		}
 		if err := a.remoteSaveManifest(); err != nil {
 			return err
@@ -1142,22 +1166,31 @@ func (a *App) RevertAll() error {
 		for _, c := range changes {
 			snapData, err := a.remoteReadSnapshotByPath(c.Path)
 			if err != nil {
-				continue // no snapshot, skip
+				// Added file or missing baseline: remove working copy and drop manifest entry.
+				_ = a.remoteSFTP.Remove(path.Join(a.remotePath, c.Path))
+				_ = a.snapEng.RemoveFromManifest([]string{c.Path})
+				continue
 			}
-			rp := path.Join(a.remotePath, c.Path)
-			f, err := a.remoteSFTP.Create(rp)
-			if err != nil {
-				return err
-			}
-			if _, err := f.Write(snapData); err != nil {
+			if c.Status == snapshot.StatusDeleted || c.Status == snapshot.StatusModified || c.Status == snapshot.StatusAdded {
+				rp := path.Join(a.remotePath, c.Path)
+				if dir := path.Dir(rp); dir != "." && dir != "/" {
+					_ = a.remoteSFTP.MkdirAll(dir)
+				}
+				f, err := a.remoteSFTP.Create(rp)
+				if err != nil {
+					return err
+				}
+				if _, err := f.Write(snapData); err != nil {
+					f.Close()
+					return err
+				}
 				f.Close()
-				return err
 			}
-			f.Close()
 		}
 		a.refreshScanLocked()
-		for _, c := range changes {
-			a.snapEng.SetFileFingerprint(c.Path, a.fingerprintFor(c.Path))
+		fps := entriesToFingerprints(a.scannedRemoteEntries)
+		for pth, fp := range fps {
+			a.snapEng.SetFileFingerprint(pth, fp)
 		}
 		if err := a.remoteSaveManifest(); err != nil {
 			return err
@@ -1187,20 +1220,32 @@ func (a *App) AcceptFile(p string) error {
 	if a.isRemote {
 		data, err := a.readRemoteFile(p)
 		if err != nil {
-			a.remoteRemoveSnapshot(p)
-			a.snapEng.RemoveFromManifest([]string{p})
-			return a.remoteSaveManifest()
+			_ = a.remoteRemoveSnapshot(p)
+			_ = a.snapEng.RemoveFromManifest([]string{p})
+			if err := a.remoteSaveManifest(); err != nil {
+				return err
+			}
+			a.emitChanges()
+			return nil
 		}
 		ext := strings.ToLower(path.Ext(p))
 		fp := a.fingerprintFor(p)
 		if !snapshot.IsTextFile(ext, snapshot.FirstBytes(data)) {
-			a.snapEng.SetFileFingerprint(p, fp)
-			return a.remoteSaveManifest()
+			if fp != "" {
+				a.snapEng.SetFileFingerprint(p, fp)
+			}
+			if err := a.remoteSaveManifest(); err != nil {
+				return err
+			}
+			a.emitChanges()
+			return nil
 		}
 		if err := a.remoteWriteSnapshot(p, data); err != nil {
 			return err
 		}
-		a.snapEng.SetFileFingerprint(p, fp)
+		if fp != "" {
+			a.snapEng.SetFileFingerprint(p, fp)
+		}
 		if err := a.remoteSaveManifest(); err != nil {
 			return err
 		}
@@ -1224,7 +1269,15 @@ func (a *App) RevertFile(p string) error {
 	if a.isRemote {
 		snapData, err := a.remoteReadSnapshotByPath(p)
 		if err != nil {
-			return a.remoteSaveManifest()
+			// No baseline snapshot: treat as added file and remove it.
+			_ = a.remoteSFTP.Remove(path.Join(a.remotePath, p))
+			_ = a.snapEng.RemoveFromManifest([]string{p})
+			a.refreshScanLocked()
+			if err := a.remoteSaveManifest(); err != nil {
+				return err
+			}
+			a.emitChanges()
+			return nil
 		}
 		rp := path.Join(a.remotePath, p)
 		a.remoteSFTP.MkdirAll(path.Dir(rp))
@@ -1238,7 +1291,9 @@ func (a *App) RevertFile(p string) error {
 		}
 		f.Close()
 		a.refreshScanLocked()
-		a.snapEng.SetFileFingerprint(p, a.fingerprintFor(p))
+		if fp := a.fingerprintFor(p); fp != "" {
+			a.snapEng.SetFileFingerprint(p, fp)
+		}
 		if err := a.remoteSaveManifest(); err != nil {
 			return err
 		}
@@ -1260,13 +1315,16 @@ func (a *App) GetFileDiff(path string) (map[string]string, error) {
 		return nil, fmt.Errorf("未选择工作区")
 	}
 	if a.isRemote {
-		newData, err := a.readRemoteFile(path)
-		if err != nil {
-			return nil, err
+		newData, newErr := a.readRemoteFile(path)
+		oldData, oldErr := a.remoteReadSnapshotByPath(path)
+		if newErr != nil && oldErr != nil {
+			return nil, newErr
 		}
-		oldData, err := a.remoteReadSnapshotByPath(path)
-		if err != nil {
-			oldData = nil // new file, no snapshot
+		if newErr != nil {
+			newData = nil // deleted file
+		}
+		if oldErr != nil {
+			oldData = nil // added file, no snapshot
 		}
 		return map[string]string{
 			"old": string(oldData),
@@ -2799,6 +2857,8 @@ func (a *App) refreshScanLocked() {
 }
 
 func (a *App) emitChanges() {
+	a.cachedChanges = nil
+	a.changesCached = false
 	changes := a.workspaceChangesLocked()
 	runtime.EventsEmit(a.ctx, "file-changes", changes)
 }

@@ -444,8 +444,9 @@ func (s *Store) RemoveRemoteWorkspace(name string) error {
 
 // ─── Appearance ─────────────────────────────────────
 // Appearance holds background-image and transparency preferences.
-// BackgroundImage is an absolute path on the local machine; opacity values are
-// clamped to 0..1 by Normalize.
+// BackgroundImage stores a data URL for portability. Older absolute paths are
+// still accepted during load and migrated when the image is selected again.
+// Opacity values are clamped to 0..1 by Normalize.
 type Appearance struct {
 	BackgroundImage   string  `json:"backgroundImage"`
 	BackgroundOpacity float64 `json:"backgroundOpacity"`

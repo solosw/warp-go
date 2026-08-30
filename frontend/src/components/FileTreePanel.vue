@@ -126,13 +126,15 @@ function sortChildren(nodes: TreeNode[]) {
 }
 
 function entriesToTree(entries: RemoteEntry[]): TreeNode[] {
-  return entries.map(entry => ({
-    name: entry.name,
-    path: entry.path,
-    isDir: entry.isDir,
-    children: entry.isDir ? null : [],
-    isBinary: !!entry.isBinary,
-  }))
+  return entries
+    .filter(entry => entry.name !== '.' && entry.name !== '..')
+    .map(entry => ({
+      name: entry.name,
+      path: entry.path,
+      isDir: entry.isDir,
+      children: entry.isDir ? null : [],
+      isBinary: !!entry.isBinary,
+    }))
 }
 
 function buildTree(files: string[], binaryFiles: string[] = [], directories: string[] = []): TreeNode[] {

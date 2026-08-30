@@ -72,7 +72,19 @@ export const useAppearanceStore = defineStore('appearance', () => {
     } catch (e: any) {
       error.value = e?.message || String(e)
     }
-    await loadImageData(backgroundImage.value)
+    // New settings contain a data URL. Keep loading old path-based settings
+    // so existing users get a transparent migration on the next save.
+    if (backgroundImage.value.startsWith('data:image/')) {
+      imageData.value = backgroundImage.value
+    } else {
+      const oldPath = backgroundImage.value
+      await loadImageData(oldPath)
+      if (imageData.value) {
+        // Migrate legacy path-based settings after the image is loaded.
+        backgroundImage.value = imageData.value
+        await persist()
+      }
+    }
     apply()
   }
 
@@ -103,8 +115,12 @@ export const useAppearanceStore = defineStore('appearance', () => {
     try {
       const picked = await SelectBackgroundImage()
       if (!picked) return
-      backgroundImage.value = picked
-      await loadImageData(picked)
+      const data = await GetBackgroundImageData(picked)
+      if (!data) return
+      // Store the image itself instead of its local path so it survives moves
+      // and remains available after restarting the application.
+      backgroundImage.value = data
+      imageData.value = data
       apply()
       await persist()
     } catch (e: any) {

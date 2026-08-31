@@ -150,8 +150,11 @@ const hasAnyContent = computed(() => store.tabs.length > 0 || props.browserOpen 
       </div>
     </div>
 
+    <!-- Keep TerminalView mounted across ACP/browser switches (v-show).
+         Destroying xterm with v-if drops scrollback; remote SSH makes it obvious. -->
     <div
-      v-if="activeView === 'terminal' && store.tabs.length > 0 && store.layoutMode === 'grid'"
+      v-if="store.tabs.length > 0 && store.layoutMode === 'grid'"
+      v-show="activeView === 'terminal'"
       class="grid-body"
       :style="{ gridTemplateColumns: `repeat(${gridCols}, 1fr)` }"
     >
@@ -161,19 +164,31 @@ const hasAnyContent = computed(() => store.tabs.length > 0 || props.browserOpen 
           <button class="grid-cell-close" @click="store.closeTab(tab.id)">×</button>
         </div>
         <div class="grid-cell-body">
-          <TerminalView :tab-id="tab.id" :show-cmd-input="showCmdInput" />
+          <TerminalView
+            :tab-id="tab.id"
+            :active="activeView === 'terminal'"
+            :show-cmd-input="showCmdInput"
+          />
         </div>
       </div>
     </div>
 
-    <div v-if="activeView === 'terminal' && store.tabs.length > 0 && store.layoutMode === 'tabs'" class="tab-body">
+    <div
+      v-if="store.tabs.length > 0 && store.layoutMode === 'tabs'"
+      v-show="activeView === 'terminal'"
+      class="tab-body"
+    >
       <div
         v-for="tab in store.tabs"
         v-show="tab.id === store.activeTabId"
         :key="tab.id"
         class="tab-content"
       >
-        <TerminalView :tab-id="tab.id" :show-cmd-input="showCmdInput" />
+        <TerminalView
+          :tab-id="tab.id"
+          :active="activeView === 'terminal' && tab.id === store.activeTabId"
+          :show-cmd-input="showCmdInput"
+        />
       </div>
     </div>
 

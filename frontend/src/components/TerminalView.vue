@@ -6,7 +6,15 @@ import { useTerminalStore } from '../stores/terminal'
 import { useAppearanceStore } from '../stores/appearance'
 import '@xterm/xterm/css/xterm.css'
 
-const props = defineProps<{ tabId: string; showCmdInput?: boolean }>()
+const props = withDefaults(defineProps<{
+  tabId: string
+  showCmdInput?: boolean
+  /** False while ACP/browser hides this terminal (parent uses v-show). */
+  active?: boolean
+}>(), {
+  showCmdInput: false,
+  active: true,
+})
 
 const store = useTerminalStore()
 const appearance = useAppearanceStore()
@@ -97,6 +105,12 @@ onMounted(async () => {
   term.open(el)
   observeTerminal(el)
 
+  // Replay any output buffered while this view was unmounted / not yet subscribed.
+  const seed = tab.value?.output || ''
+  if (seed) {
+    term.write(seed)
+  }
+
   unsubscribe = store.subscribeTerminal(props.tabId, (data: string) => {
     term?.write(data)
   })
@@ -113,6 +127,19 @@ onMounted(async () => {
 // Repaint the xterm canvas when the user drags the panel-opacity slider.
 watch(() => appearance.panelOpacity, () => {
   applyTermTheme()
+})
+
+// Parent keeps this instance mounted with v-show while ACP/browser is open.
+// When shown again, layout size is valid again — refit and refresh the canvas.
+watch(() => props.active, async (isActive, wasActive) => {
+  if (!isActive || wasActive === true || !term || !fitAddon) return
+  await nextTick()
+  requestAnimationFrame(() => {
+    const el = termEl.value
+    if (!term || !fitAddon || !el || el.offsetParent === null) return
+    try { fitAddon.fit() } catch {}
+    term.refresh(0, Math.max(0, term.rows - 1))
+  })
 })
 
 function sendCommand() {

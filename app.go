@@ -1360,6 +1360,108 @@ func (a *App) GetFileContent(path string) (string, error) {
 	return snapshot.ReadFileContent(a.workspace, path)
 }
 
+// previewableBinaryMIME maps workspace files the editor can preview (image/pdf/office).
+var previewableBinaryMIME = map[string]string{
+	".png":  "image/png",
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".gif":  "image/gif",
+	".webp": "image/webp",
+	".bmp":  "image/bmp",
+	".ico":  "image/x-icon",
+	".svg":  "image/svg+xml",
+	".pdf":  "application/pdf",
+	".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	".xls":  "application/vnd.ms-excel",
+	".csv":  "text/csv",
+	".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	".doc":  "application/msword",
+}
+
+const maxPreviewBinarySize = 20 * 1024 * 1024
+
+func previewMIME(relPath string) (string, bool) {
+	ext := strings.ToLower(filepath.Ext(relPath))
+	if ext == "" {
+		ext = strings.ToLower(path.Ext(relPath))
+	}
+	mime, ok := previewableBinaryMIME[ext]
+	return mime, ok
+}
+
+func sanitizeWorkspaceRelPath(relPath string) (string, error) {
+	relPath = strings.TrimSpace(strings.ReplaceAll(relPath, `\`, "/"))
+	if relPath == "" || strings.HasPrefix(relPath, "/") || strings.Contains(relPath, ":") {
+		return "", fmt.Errorf("无效路径")
+	}
+	cleaned := path.Clean(relPath)
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", fmt.Errorf("无效路径")
+	}
+	return cleaned, nil
+}
+
+// GetFilePreviewData returns a data URL for previewable binary files (images, PDF, Excel, Word).
+func (a *App) GetFilePreviewData(relPath string) (string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.workspace == "" {
+		return "", fmt.Errorf("未选择工作区")
+	}
+	relPath, err := sanitizeWorkspaceRelPath(relPath)
+	if err != nil {
+		return "", err
+	}
+	mime, ok := previewMIME(relPath)
+	if !ok {
+		return "", fmt.Errorf("不支持预览该文件类型")
+	}
+
+	var data []byte
+	if a.isRemote {
+		if a.remoteSFTP == nil {
+			return "", fmt.Errorf("远程连接不可用")
+		}
+		info, err := a.remoteSFTP.Stat(path.Join(a.remotePath, relPath))
+		if err != nil {
+			return "", fmt.Errorf("读取文件失败: %w", err)
+		}
+		if info.IsDir() {
+			return "", fmt.Errorf("不支持预览该文件类型")
+		}
+		if info.Size() > maxPreviewBinarySize {
+			return "", fmt.Errorf("文件过大，无法预览（限制 20MB）")
+		}
+		data, err = a.readRemoteFile(relPath)
+		if err != nil {
+			return "", fmt.Errorf("读取文件失败: %w", err)
+		}
+	} else {
+		full := filepath.Join(a.workspace, filepath.FromSlash(relPath))
+		info, err := os.Stat(full)
+		if err != nil {
+			return "", fmt.Errorf("读取文件失败: %w", err)
+		}
+		if info.IsDir() {
+			return "", fmt.Errorf("不支持预览该文件类型")
+		}
+		if info.Size() > maxPreviewBinarySize {
+			return "", fmt.Errorf("文件过大，无法预览（限制 20MB）")
+		}
+		data, err = os.ReadFile(full)
+		if err != nil {
+			return "", fmt.Errorf("读取文件失败: %w", err)
+		}
+	}
+	if int64(len(data)) > maxPreviewBinarySize {
+		return "", fmt.Errorf("文件过大，无法预览（限制 20MB）")
+	}
+	if mime == "image/svg+xml" && strings.Contains(strings.ToLower(string(data)), "<script") {
+		return "", fmt.Errorf("该 SVG 含有脚本，已拒绝预览")
+	}
+	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data), nil
+}
+
 func (a *App) SaveFile(relPath, content string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()

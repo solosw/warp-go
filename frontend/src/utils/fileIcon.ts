@@ -37,8 +37,11 @@ const fileIconByExtension: Record<string, string> = {
   sql: 'file-type-sql', graphql: 'file-type-graphql', gql: 'file-type-graphql',
   lua: 'file-type-lua', r: 'file-type-r', dart: 'file-type-dart', ex: 'file-type-elixir', exs: 'file-type-elixir',
   hs: 'file-type-haskell', erl: 'file-type-erlang', clj: 'file-type-clojure', cljs: 'file-type-clojure',
-  png: 'file-type-image', jpg: 'file-type-image', jpeg: 'file-type-image', gif: 'file-type-image', webp: 'file-type-image', ico: 'file-type-image',
-  pdf: 'file-type-pdf', zip: 'file-type-zip', gz: 'file-type-zip', tar: 'file-type-zip',
+  png: 'file-type-image', jpg: 'file-type-image', jpeg: 'file-type-image', gif: 'file-type-image', webp: 'file-type-image', ico: 'file-type-image', bmp: 'file-type-image',
+  pdf: 'file-type-pdf',
+  xlsx: 'file-type-excel', xls: 'file-type-excel', csv: 'file-type-excel',
+  docx: 'file-type-word', doc: 'file-type-word',
+  zip: 'file-type-zip', gz: 'file-type-zip', tar: 'file-type-zip',
   ttf: 'file-type-font', otf: 'file-type-font', woff: 'file-type-font', woff2: 'file-type-font',
 }
 

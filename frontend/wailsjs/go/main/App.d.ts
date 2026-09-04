@@ -47,6 +47,8 @@ export function GetFileContent(arg1:string):Promise<string>;
 
 export function GetFileDiff(arg1:string):Promise<Record<string, string>>;
 
+export function GetFilePreviewData(arg1:string):Promise<string>;
+
 export function GetLSPStatus(arg1:string):Promise<lsp.ServerInfo>;
 
 export function GetProjectRunCommands():Promise<Array<config.ProjectRunCommand>>;

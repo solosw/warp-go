@@ -14,6 +14,7 @@ import {
 } from '../../wailsjs/go/main/App'
 import { useWorkspaceStore } from '../stores/workspace'
 import { getFileIcon, getFolderIcon } from '../utils/fileIcon'
+import { isPreviewableBinary } from '../utils/previewKind'
 import { OnFileDrop, OnFileDropOff } from '../../wailsjs/runtime/runtime'
 
 const ws = useWorkspaceStore()
@@ -328,7 +329,7 @@ function handleClick(node: TreeNode, event: MouseEvent) {
   if (renamePath.value === node.path) return
   if (node.isDir) {
     toggleFolder(node)
-  } else if (!node.isBinary) {
+  } else if (!node.isBinary || isPreviewableBinary(node.path)) {
     ws.openPreviewFile(node.path)
   }
 }

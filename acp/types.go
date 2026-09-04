@@ -65,6 +65,16 @@ type SessionMode struct {
 	Description string `json:"description,omitempty"`
 }
 
+// MediaItem is a safe, UI-ready attachment from an ACP content block
+// (image / audio / video / linked resource). URL is either https? or a data: URL.
+type MediaItem struct {
+	Kind     string `json:"kind"` // image | video | audio | file
+	URL      string `json:"url"`  // displayable src
+	MimeType string `json:"mimeType,omitempty"`
+	Alt      string `json:"alt,omitempty"`
+	Name     string `json:"name,omitempty"`
+}
+
 // Event is a UI-facing ACP session event.
 type Event struct {
 	SessionID string `json:"sessionId"`
@@ -73,6 +83,9 @@ type Event struct {
 	Role    string `json:"role,omitempty"`
 	Content string `json:"content,omitempty"`
 	Status  string `json:"status,omitempty"`
+
+	// Media accompanies message/thought events (native ACP image/audio/resource blocks).
+	Media []MediaItem `json:"media,omitempty"`
 
 	RequestID string             `json:"requestId,omitempty"`
 	ToolName  string             `json:"toolName,omitempty"`
@@ -92,10 +105,10 @@ type Event struct {
 	CurrentModeID string        `json:"currentModeId,omitempty"`
 
 	// usage / context window (sessionUpdate usage_update + prompt usage)
-	UsageUsed  int64   `json:"usageUsed,omitempty"`
-	UsageSize  int64   `json:"usageSize,omitempty"`
-	UsageCost  float64 `json:"usageCost,omitempty"`
-	UsageCurrency string `json:"usageCurrency,omitempty"`
+	UsageUsed     int64   `json:"usageUsed,omitempty"`
+	UsageSize     int64   `json:"usageSize,omitempty"`
+	UsageCost     float64 `json:"usageCost,omitempty"`
+	UsageCurrency string  `json:"usageCurrency,omitempty"`
 }
 
 // AvailableCommand is a slash command advertised by the agent.

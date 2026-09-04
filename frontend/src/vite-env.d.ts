@@ -47,3 +47,16 @@ declare module '*.vue' {
     const component: DefineComponent<{}, {}, any>
     export default component
 }
+
+declare module 'xlsx' {
+  export function read(data: ArrayBuffer | Uint8Array, opts?: any): any
+  export const utils: {
+    sheet_to_json(sheet: any, opts?: any): any
+  }
+}
+
+declare module 'mammoth/mammoth.browser' {
+  export function convertToHtml(input: { arrayBuffer: ArrayBuffer }): Promise<{ value: string }>
+  const mammoth: { convertToHtml: typeof convertToHtml }
+  export default mammoth
+}

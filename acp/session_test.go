@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -125,7 +126,6 @@ func findRepoRoot(t *testing.T) string {
 	return filepath.Clean(filepath.Join(dir, ".."))
 }
 
-
 func TestParseUsageUpdateEvent(t *testing.T) {
 	ev := parseUsageUpdateEvent("s1", map[string]interface{}{
 		"used": float64(1234),
@@ -159,6 +159,77 @@ func TestThoughtChunkNotSystem(t *testing.T) {
 	s.handleSessionUpdate(params)
 	if len(got) != 1 || got[0].Type != "thought" || got[0].Content != "hmm" || got[0].Role != "assistant" {
 		t.Fatalf("got=%+v", got)
+	}
+}
+
+func TestParseContentBlocksImage(t *testing.T) {
+	text, media := parseContentBlocks([]interface{}{
+		map[string]interface{}{"type": "text", "text": "see "},
+		map[string]interface{}{
+			"type":     "image",
+			"mimeType": "image/png",
+			"data":     "aGVsbG8=", // "hello"
+			"alt":      "demo",
+		},
+		map[string]interface{}{
+			"type": "resource_link",
+			"uri":  "https://example.com/pic.jpg",
+			"name": "pic.jpg",
+		},
+		map[string]interface{}{
+			"type": "resource_link",
+			"uri":  "file:///etc/passwd", // rejected
+			"name": "bad",
+		},
+	})
+	if text != "see " {
+		t.Fatalf("text=%q", text)
+	}
+	if len(media) != 2 {
+		t.Fatalf("media len=%d %+v", len(media), media)
+	}
+	if media[0].Kind != "image" || !strings.HasPrefix(media[0].URL, "data:image/png;base64,") {
+		t.Fatalf("media0=%+v", media[0])
+	}
+	if media[0].Alt != "demo" {
+		t.Fatalf("alt=%q", media[0].Alt)
+	}
+	if media[1].Kind != "image" || media[1].URL != "https://example.com/pic.jpg" {
+		t.Fatalf("media1=%+v", media[1])
+	}
+}
+
+func TestParseContentBlocksRejectsSVGBase64(t *testing.T) {
+	_, media := parseContentBlocks(map[string]interface{}{
+		"type":     "image",
+		"mimeType": "image/svg+xml",
+		"data":     "PHN2Zz4=",
+	})
+	if len(media) != 0 {
+		t.Fatalf("expected no svg data media, got %+v", media)
+	}
+}
+
+func TestImageOnlyMessageChunk(t *testing.T) {
+	var got []Event
+	s := &Session{ID: "s-img", emit: func(ev Event) { got = append(got, ev) }}
+	params, _ := json.Marshal(map[string]interface{}{
+		"sessionId": "agent-1",
+		"update": map[string]interface{}{
+			"sessionUpdate": "agent_message_chunk",
+			"content": map[string]interface{}{
+				"type":     "image",
+				"mimeType": "image/jpeg",
+				"uri":      "https://cdn.example.com/a.jpg",
+			},
+		},
+	})
+	s.handleSessionUpdate(params)
+	if len(got) != 1 || got[0].Type != "message" || got[0].Role != "assistant" {
+		t.Fatalf("got=%+v", got)
+	}
+	if got[0].Content != "" || len(got[0].Media) != 1 || got[0].Media[0].Kind != "image" {
+		t.Fatalf("media event=%+v", got[0])
 	}
 }
 

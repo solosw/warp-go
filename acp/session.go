@@ -199,22 +199,22 @@ func (s *Session) handleSessionUpdate(params json.RawMessage) {
 	kind, _ := update["sessionUpdate"].(string)
 	switch kind {
 	case "agent_message_chunk", "user_message_chunk":
-		text := contentToText(update["content"])
-		if text == "" {
+		text, media := parseContentBlocks(update["content"])
+		if text == "" && len(media) == 0 {
 			return
 		}
 		role := "assistant"
 		if kind == "user_message_chunk" {
 			role = "user"
 		}
-		s.emit(Event{SessionID: s.ID, Type: "message", Role: role, Content: text})
+		s.emit(Event{SessionID: s.ID, Type: "message", Role: role, Content: text, Media: media})
 	case "agent_thought_chunk":
-		text := contentToText(update["content"])
-		if text == "" {
+		text, media := parseContentBlocks(update["content"])
+		if text == "" && len(media) == 0 {
 			return
 		}
-		// Dedicated thought stream (not system notes).
-		s.emit(Event{SessionID: s.ID, Type: "thought", Role: "assistant", Content: text})
+		// Dedicated thought stream (not system notes). Text is primary; media rare.
+		s.emit(Event{SessionID: s.ID, Type: "thought", Role: "assistant", Content: text, Media: media})
 	case "tool_call", "tool_call_update":
 		s.emitToolEvent(kind, update)
 	case "plan":
@@ -232,43 +232,301 @@ func (s *Session) handleSessionUpdate(params json.RawMessage) {
 	case "usage_update":
 		s.emit(parseUsageUpdateEvent(s.ID, update))
 	default:
-		if text := contentToText(update["content"]); text != "" {
-			s.emit(Event{SessionID: s.ID, Type: "message", Role: "assistant", Content: text})
+		if text, media := parseContentBlocks(update["content"]); text != "" || len(media) > 0 {
+			s.emit(Event{SessionID: s.ID, Type: "message", Role: "assistant", Content: text, Media: media})
 		}
 	}
 }
 
+// maxMediaBase64Chars caps embedded media payload size (~6MB binary at 8M chars).
+const maxMediaBase64Chars = 8 * 1024 * 1024
+
 func contentToText(v interface{}) string {
-	switch x := v.(type) {
-	case nil:
-		return ""
-	case string:
-		return x
-	case map[string]interface{}:
-		if t, ok := x["text"].(string); ok {
-			return t
-		}
-		if t, ok := x["content"].(string); ok {
-			return t
-		}
-		if inner, ok := x["content"]; ok {
-			return contentToText(inner)
-		}
-		if t, ok := x["type"].(string); ok && t == "text" {
-			if tx, ok := x["text"].(string); ok {
-				return tx
+	text, _ := parseContentBlocks(v)
+	return text
+}
+
+// parseContentBlocks extracts plain text and displayable media from ACP ContentBlock
+// values (single block, array, or loose shapes used by agents).
+func parseContentBlocks(v interface{}) (string, []MediaItem) {
+	var text strings.Builder
+	var media []MediaItem
+	var walk func(interface{})
+	walk = func(node interface{}) {
+		switch x := node.(type) {
+		case nil:
+			return
+		case string:
+			if strings.TrimSpace(x) != "" {
+				text.WriteString(x)
+			}
+		case []interface{}:
+			for _, item := range x {
+				walk(item)
+			}
+		case map[string]interface{}:
+			typ, _ := x["type"].(string)
+			typ = strings.ToLower(strings.TrimSpace(typ))
+			switch typ {
+			case "text", "":
+				if t, ok := x["text"].(string); ok && t != "" {
+					text.WriteString(t)
+					return
+				}
+				if t, ok := x["content"].(string); ok && t != "" {
+					text.WriteString(t)
+					return
+				}
+				if inner, ok := x["content"]; ok && typ == "" {
+					walk(inner)
+				}
+			case "image", "audio", "video":
+				if m, ok := mediaFromBlock(typ, x); ok {
+					media = append(media, m)
+				}
+			case "resource_link":
+				if m, ok := mediaFromResourceLink(x); ok {
+					media = append(media, m)
+				}
+			case "resource":
+				if m, ok := mediaFromEmbeddedResource(x); ok {
+					media = append(media, m)
+				}
+			default:
+				// Unknown typed block: try nested text only.
+				if t, ok := x["text"].(string); ok && t != "" {
+					text.WriteString(t)
+				}
 			}
 		}
-	case []interface{}:
-		var b strings.Builder
-		for _, item := range x {
-			if t := contentToText(item); t != "" {
-				b.WriteString(t)
-			}
-		}
-		return b.String()
 	}
-	return ""
+	walk(v)
+	return text.String(), media
+}
+
+func mediaFromBlock(kind string, x map[string]interface{}) (MediaItem, bool) {
+	mime, _ := x["mimeType"].(string)
+	if mime == "" {
+		mime, _ = x["mime_type"].(string)
+	}
+	mime = strings.TrimSpace(mime)
+	name, _ := x["name"].(string)
+	alt, _ := x["alt"].(string)
+	if alt == "" {
+		alt, _ = x["description"].(string)
+	}
+	if alt == "" {
+		alt = name
+	}
+
+	url := ""
+	if data, _ := x["data"].(string); strings.TrimSpace(data) != "" {
+		url = dataURLFromBase64(mime, data)
+	}
+	if url == "" {
+		if u, _ := x["uri"].(string); isSafeMediaURL(u) {
+			url = strings.TrimSpace(u)
+		}
+	}
+	if url == "" {
+		if u, _ := x["url"].(string); isSafeMediaURL(u) {
+			url = strings.TrimSpace(u)
+		}
+	}
+	if url == "" {
+		return MediaItem{}, false
+	}
+	k := mediaKindFrom(kind, mime, url)
+	if mime == "" {
+		mime = mimeFromKind(k)
+	}
+	return MediaItem{Kind: k, URL: url, MimeType: mime, Alt: strings.TrimSpace(alt), Name: strings.TrimSpace(name)}, true
+}
+
+func mediaFromResourceLink(x map[string]interface{}) (MediaItem, bool) {
+	uri, _ := x["uri"].(string)
+	uri = strings.TrimSpace(uri)
+	if !isSafeMediaURL(uri) {
+		return MediaItem{}, false
+	}
+	mime, _ := x["mimeType"].(string)
+	if mime == "" {
+		mime, _ = x["mime_type"].(string)
+	}
+	name, _ := x["name"].(string)
+	alt, _ := x["description"].(string)
+	if alt == "" {
+		alt = name
+	}
+	k := mediaKindFrom("file", mime, uri)
+	return MediaItem{Kind: k, URL: uri, MimeType: strings.TrimSpace(mime), Alt: strings.TrimSpace(alt), Name: strings.TrimSpace(name)}, true
+}
+
+func mediaFromEmbeddedResource(x map[string]interface{}) (MediaItem, bool) {
+	res, _ := x["resource"].(map[string]interface{})
+	if res == nil {
+		// Some agents nest fields directly on the block.
+		res = x
+	}
+	mime, _ := res["mimeType"].(string)
+	if mime == "" {
+		mime, _ = res["mime_type"].(string)
+	}
+	name, _ := res["name"].(string)
+	if name == "" {
+		name, _ = x["name"].(string)
+	}
+	uri, _ := res["uri"].(string)
+
+	if blob, _ := res["blob"].(string); strings.TrimSpace(blob) != "" {
+		url := dataURLFromBase64(mime, blob)
+		if url == "" {
+			return MediaItem{}, false
+		}
+		k := mediaKindFrom("file", mime, url)
+		return MediaItem{Kind: k, URL: url, MimeType: strings.TrimSpace(mime), Name: strings.TrimSpace(name), Alt: strings.TrimSpace(name)}, true
+	}
+	// Text resources stay as message text when useful; binary-ish links become media.
+	if t, _ := res["text"].(string); strings.TrimSpace(t) != "" && !looksLikeBinaryMime(mime) {
+		return MediaItem{}, false
+	}
+	uri = strings.TrimSpace(uri)
+	if !isSafeMediaURL(uri) {
+		return MediaItem{}, false
+	}
+	k := mediaKindFrom("file", mime, uri)
+	return MediaItem{Kind: k, URL: uri, MimeType: strings.TrimSpace(mime), Name: strings.TrimSpace(name), Alt: strings.TrimSpace(name)}, true
+}
+
+func dataURLFromBase64(mime, data string) string {
+	data = strings.TrimSpace(data)
+	if data == "" {
+		return ""
+	}
+	// Already a data URL.
+	if strings.HasPrefix(strings.ToLower(data), "data:") {
+		if isSafeMediaURL(data) {
+			return data
+		}
+		return ""
+	}
+	if len(data) > maxMediaBase64Chars {
+		return ""
+	}
+	mime = strings.TrimSpace(mime)
+	if mime == "" {
+		mime = "application/octet-stream"
+	}
+	// Only embed image/audio/video as data URLs (no arbitrary binary/script mimes).
+	ml := strings.ToLower(mime)
+	if !strings.HasPrefix(ml, "image/") && !strings.HasPrefix(ml, "audio/") && !strings.HasPrefix(ml, "video/") {
+		return ""
+	}
+	if strings.Contains(ml, "svg") {
+		// Inline SVG can carry script; skip rather than sanitize full XML.
+		return ""
+	}
+	// Strip whitespace/newlines common in multiline base64.
+	if strings.ContainsAny(data, " \n\r\t") {
+		data = strings.Map(func(r rune) rune {
+			if r == ' ' || r == '\n' || r == '\r' || r == '\t' {
+				return -1
+			}
+			return r
+		}, data)
+	}
+	out := "data:" + mime + ";base64," + data
+	if !isSafeMediaURL(out) {
+		return ""
+	}
+	return out
+}
+
+func isSafeMediaURL(u string) bool {
+	u = strings.TrimSpace(u)
+	if u == "" {
+		return false
+	}
+	lower := strings.ToLower(u)
+	switch {
+	case strings.HasPrefix(lower, "https://"):
+		return true
+	case strings.HasPrefix(lower, "http://"):
+		return true
+	case strings.HasPrefix(lower, "data:image/"),
+		strings.HasPrefix(lower, "data:audio/"),
+		strings.HasPrefix(lower, "data:video/"):
+		// Reject data URLs that embed scripts via exotic mime or huge payloads.
+		if len(u) > maxMediaBase64Chars+128 {
+			return false
+		}
+		if strings.Contains(lower, "svg") && strings.Contains(lower, "script") {
+			return false
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func mediaKindFrom(hint, mime, url string) string {
+	m := strings.ToLower(strings.TrimSpace(mime))
+	h := strings.ToLower(strings.TrimSpace(hint))
+	u := strings.ToLower(url)
+	switch {
+	case strings.HasPrefix(m, "image/"), h == "image", strings.HasPrefix(u, "data:image/"):
+		return "image"
+	case strings.HasPrefix(m, "video/"), h == "video", strings.HasPrefix(u, "data:video/"):
+		return "video"
+	case strings.HasPrefix(m, "audio/"), h == "audio", strings.HasPrefix(u, "data:audio/"):
+		return "audio"
+	default:
+		// Guess from URL extension for http(s) links.
+		if i := strings.Index(u, "?"); i >= 0 {
+			u = u[:i]
+		}
+		switch {
+		case strings.HasSuffix(u, ".png"), strings.HasSuffix(u, ".jpg"), strings.HasSuffix(u, ".jpeg"),
+			strings.HasSuffix(u, ".gif"), strings.HasSuffix(u, ".webp"), strings.HasSuffix(u, ".bmp"),
+			strings.HasSuffix(u, ".svg"):
+			return "image"
+		case strings.HasSuffix(u, ".mp4"), strings.HasSuffix(u, ".webm"), strings.HasSuffix(u, ".mov"),
+			strings.HasSuffix(u, ".mkv"):
+			return "video"
+		case strings.HasSuffix(u, ".mp3"), strings.HasSuffix(u, ".wav"), strings.HasSuffix(u, ".ogg"),
+			strings.HasSuffix(u, ".m4a"), strings.HasSuffix(u, ".flac"):
+			return "audio"
+		}
+		if h == "image" || h == "video" || h == "audio" {
+			return h
+		}
+		return "file"
+	}
+}
+
+func mimeFromKind(kind string) string {
+	switch kind {
+	case "image":
+		return "image/*"
+	case "video":
+		return "video/*"
+	case "audio":
+		return "audio/*"
+	default:
+		return "application/octet-stream"
+	}
+}
+
+func looksLikeBinaryMime(mime string) bool {
+	m := strings.ToLower(strings.TrimSpace(mime))
+	if m == "" {
+		return false
+	}
+	return strings.HasPrefix(m, "image/") ||
+		strings.HasPrefix(m, "audio/") ||
+		strings.HasPrefix(m, "video/") ||
+		m == "application/octet-stream" ||
+		m == "application/pdf"
 }
 
 func (s *Session) handleIncomingRequest(msg rpcMessage) {

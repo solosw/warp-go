@@ -4,11 +4,12 @@ import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
 import DiffView from './DiffView.vue'
 import CodeEditor from './CodeEditor.vue'
-import { GetFileContent, GetFileDiff, SaveFile } from '../../wailsjs/go/main/App'
+import { GetFileContent, GetFileDiff, GetFilePreviewData, SaveFile } from '../../wailsjs/go/main/App'
 import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
 import { useWorkspaceStore } from '../stores/workspace'
 import { useFileChangesStore } from '../stores/fileChanges'
 import { detectLang } from '../utils/detectLang'
+import { previewKind, type PreviewKind } from '../utils/previewKind'
 import { renderMarkdown, renderMermaidBlocks, isSafeHref } from '../utils/renderMarkdown'
 
 const ws = useWorkspaceStore()
@@ -27,12 +28,25 @@ const cache = ref<Record<string, {
   saveError: string
   /** Markdown files only: show the rendered document instead of the source. */
   showRendered: boolean
+  kind: PreviewKind
+  previewUrl: string
+  previewError: string
+  sheetName: string
+  sheets: { name: string; rows: string[][] }[]
+  wordHtml: string
 }>>({})
 
 const activeFile = computed(() => ws.activePreviewFile)
 const activeState = computed(() => activeFile.value ? cache.value[activeFile.value] : null)
 const isChanged = computed(() => !!activeFile.value && fc.changes.some(c => c.path === activeFile.value))
 const isMarkdown = computed(() => !!activeFile.value && isMarkdownPath(activeFile.value))
+const activeKind = computed<PreviewKind>(() => activeFile.value ? previewKind(activeFile.value) : 'text')
+const isBinaryPreview = computed(() => activeKind.value !== 'text')
+const activeSheet = computed(() => {
+  const st = activeState.value
+  if (!st?.sheets?.length) return null
+  return st.sheets.find(s => s.name === st.sheetName) || st.sheets[0]
+})
 const renderedHtml = computed(() => {
   const st = activeState.value
   if (!st || !isMarkdown.value) return ''
@@ -57,6 +71,8 @@ function getOrCreate(path: string) {
       content: '', highlightedHtml: '', loading: false, showDiff: false,
       oldContent: '', newContent: '', isEditing: true, editContent: '', isDirty: false, saveError: '',
       showRendered: false,
+      kind: previewKind(path), previewUrl: '', previewError: '',
+      sheetName: '', sheets: [], wordHtml: '',
     }
   }
   return cache.value[path]
@@ -83,9 +99,27 @@ async function loadFile(path: string) {
   const st = getOrCreate(path)
   st.loading = true
   st.showDiff = false
-  st.isEditing = true
   st.isDirty = false
   st.saveError = ''
+  st.previewError = ''
+  st.kind = previewKind(path)
+  st.isEditing = st.kind === 'text'
+  if (st.kind !== 'text') {
+    st.previewUrl = ''
+    st.sheets = []
+    st.wordHtml = ''
+    try {
+      const url = await GetFilePreviewData(path)
+      st.previewUrl = url || ''
+      if (!st.previewUrl) throw new Error('empty preview')
+      if (st.kind === 'spreadsheet') await parseSpreadsheet(st)
+      if (st.kind === 'word') await parseWord(st)
+    } catch (e: any) {
+      st.previewError = String(e?.message || e || '无法预览该文件')
+    }
+    st.loading = false
+    return
+  }
   try {
     const raw = await GetFileContent(path) || ''
     st.content = raw
@@ -95,6 +129,51 @@ async function loadFile(path: string) {
     st.highlightedHtml = '<span style="color:#f85149">[无法读取文件]</span>'
   }
   st.loading = false
+}
+
+function dataURLToUint8(url: string): Uint8Array {
+  const i = url.indexOf(',')
+  const b64 = i >= 0 ? url.slice(i + 1) : url
+  const bin = atob(b64)
+  const out = new Uint8Array(bin.length)
+  for (let n = 0; n < bin.length; n++) out[n] = bin.charCodeAt(n)
+  return out
+}
+
+function cellText(v: unknown): string {
+  if (v == null) return ''
+  if (v instanceof Date) return v.toISOString().slice(0, 10)
+  return String(v)
+}
+
+async function parseSpreadsheet(st: { previewUrl: string; sheets: { name: string; rows: string[][] }[]; sheetName: string; previewError: string }) {
+  const { read, utils } = await import('xlsx')
+  const bytes = dataURLToUint8(st.previewUrl)
+  const wb = read(bytes, { type: 'array', cellDates: true })
+  const names = (wb.SheetNames || []) as string[]
+  const sheets = names.map((name: string) => {
+    const sheet = wb.Sheets[name]
+    const aoa = utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '' }) as unknown[][]
+    const rows = aoa.slice(0, 500).map((r: unknown[]) => (r || []).slice(0, 40).map(cellText))
+    return { name, rows }
+  }).filter((s: { name: string }) => !!s.name)
+  st.sheets = sheets
+  st.sheetName = sheets[0]?.name || ''
+  if (!sheets.length) st.previewError = '工作表为空'
+}
+
+async function parseWord(st: { previewUrl: string; wordHtml: string; previewError: string; kind: PreviewKind }) {
+  if (st.previewUrl.startsWith('data:application/msword')) {
+    st.previewError = '旧版 .doc 暂不支持预览，请另存为 .docx'
+    return
+  }
+  const mammothMod: any = await import('mammoth/mammoth.browser')
+  const convert = mammothMod.convertToHtml || mammothMod.default?.convertToHtml
+  const bytes = dataURLToUint8(st.previewUrl)
+  const copy = new Uint8Array(bytes.byteLength)
+  copy.set(bytes)
+  const result = await convert({ arrayBuffer: copy.buffer })
+  st.wordHtml = result.value || '<p>（空文档）</p>'
 }
 
 async function toggleDiff() {
@@ -389,18 +468,18 @@ onBeforeUnmount(() => window.removeEventListener('resize', onWindowResize))
         <div class="preview-toolbar">
           <span class="preview-path">{{ activeFile }}</span>
           <button
-            v-if="isMarkdown"
+            v-if="isMarkdown && !isBinaryPreview"
             class="btn-md"
             :class="{ active: activeState?.showRendered }"
             @click="toggleRendered"
           >{{ activeState?.showRendered ? '看源码' : '看渲染' }}</button>
-          <template v-if="activeState?.isEditing">
+          <template v-if="!isBinaryPreview && activeState?.isEditing">
             <span v-if="activeState?.isDirty" class="unsaved-indicator" title="有未保存的更改">●</span>
             <button class="btn-save" :disabled="!activeState?.isDirty" @click="handleSave">保存</button>
             <button class="btn-cancel" :disabled="!activeState?.isDirty" @click="cancelEdit">还原</button>
             <span v-if="activeState?.saveError" class="save-error">{{ activeState.saveError }}</span>
           </template>
-          <template v-else>
+          <template v-else-if="!isBinaryPreview">
             <button class="btn-edit" @click="enterEdit">编辑</button>
             <button class="btn-diff" :class="{ active: isChanged }" @click="toggleDiff">
               {{ activeState?.showDiff ? '隐藏差异' : '查看差异' }}
@@ -408,6 +487,39 @@ onBeforeUnmount(() => window.removeEventListener('resize', onWindowResize))
           </template>
         </div>
         <div v-if="activeState?.loading" class="preview-loading">加载中...</div>
+        <div v-else-if="activeState?.previewError" class="preview-error">{{ activeState.previewError }}</div>
+        <div v-else-if="activeKind === 'image'" class="media-wrap">
+          <img class="preview-image" :src="activeState?.previewUrl" :alt="getFileName(activeFile)" />
+        </div>
+        <iframe
+          v-else-if="activeKind === 'pdf'"
+          class="preview-pdf"
+          :src="activeState?.previewUrl"
+          title="PDF 预览"
+        ></iframe>
+        <div v-else-if="activeKind === 'spreadsheet'" class="sheet-wrap">
+          <div v-if="activeState?.sheets.length" class="sheet-tabs">
+            <button
+              v-for="s in activeState.sheets"
+              :key="s.name"
+              type="button"
+              class="sheet-tab"
+              :class="{ active: (activeSheet?.name || activeState.sheetName) === s.name }"
+              @click="activeState!.sheetName = s.name"
+            >{{ s.name }}</button>
+          </div>
+          <div class="sheet-table-wrap">
+            <table v-if="activeSheet" class="sheet-table">
+              <tbody>
+                <tr v-for="(row, ri) in activeSheet.rows" :key="ri">
+                  <td v-for="(cell, ci) in row" :key="ci">{{ cell }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <div v-else class="preview-loading">工作表为空</div>
+          </div>
+        </div>
+        <div v-else-if="activeKind === 'word'" class="word-body" v-html="activeState?.wordHtml"></div>
         <div v-else-if="activeState?.isEditing && !activeState?.showRendered" class="editor-wrap">
           <CodeEditor
             :model-value="activeState!.editContent"
@@ -625,6 +737,86 @@ onBeforeUnmount(() => window.removeEventListener('resize', onWindowResize))
   text-overflow: ellipsis;
 }
 .preview-loading { padding: 20px; color: #8b949e; font-size: 12px; }
+.preview-error { padding: 20px; color: #f85149; font-size: 12px; }
+.media-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #010409;
+  padding: 16px;
+}
+.preview-image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  background: repeating-conic-gradient(#161b22 0% 25%, #0d1117 0% 50%) 50% / 16px 16px;
+}
+.preview-pdf {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+  background: #0d1117;
+}
+.sheet-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.sheet-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px;
+  overflow-x: auto;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  flex-shrink: 0;
+}
+.sheet-tab {
+  background: #21262d;
+  border: 1px solid #30363d;
+  color: #8b949e;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sheet-tab.active { color: #58a6ff; border-color: #58a6ff; }
+.sheet-table-wrap { flex: 1; overflow: auto; min-height: 0; }
+.sheet-table {
+  border-collapse: collapse;
+  font-size: 12px;
+  color: #c9d1d9;
+}
+.sheet-table td {
+  border: 1px solid #30363d;
+  padding: 4px 8px;
+  white-space: nowrap;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sheet-table tr:first-child td { font-weight: 600; background: #161b22; color: #e6edf3; }
+.word-body {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  padding: 16px 20px 40px;
+  color: #c9d1d9;
+  font-size: 14px;
+  line-height: 1.65;
+}
+.word-body :deep(img) { max-width: 100%; }
+.word-body :deep(table) { border-collapse: collapse; max-width: 100%; }
+.word-body :deep(td), .word-body :deep(th) { border: 1px solid #30363d; padding: 4px 8px; }
+.word-body :deep(p) { margin: 0 0 10px; }
+
 .editor-wrap {
   flex: 1;
   overflow: hidden;

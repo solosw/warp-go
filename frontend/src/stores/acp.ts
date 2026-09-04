@@ -15,11 +15,21 @@ import { config } from '../../wailsjs/go/models'
 
 export type AcpRole = 'user' | 'assistant' | 'system'
 
+/** Safe media attachment from ACP content blocks (image/audio/video/file). */
+export interface AcpMediaItem {
+  kind: 'image' | 'video' | 'audio' | 'file' | string
+  url: string
+  mimeType?: string
+  alt?: string
+  name?: string
+}
+
 export interface AcpMessage {
   id: string
   kind: 'message'
   role: AcpRole
   content: string
+  media?: AcpMediaItem[]
   streaming?: boolean
 }
 
@@ -27,6 +37,7 @@ export interface AcpThoughtItem {
   id: string
   kind: 'thought'
   content: string
+  media?: AcpMediaItem[]
   streaming?: boolean
   expanded?: boolean
 }
@@ -197,6 +208,47 @@ function isAllowish(o: AcpPermissionOption) {
   return k.includes('allow') || id === 'allow' || n.includes('allow') || n.includes('允许')
 }
 
+const SAFE_MEDIA_URL = /^(https?:|data:image\/|data:audio\/|data:video\/)/i
+
+function normalizeMedia(raw: any): AcpMediaItem[] {
+  if (!raw) return []
+  if (typeof raw === 'string') {
+    try { raw = JSON.parse(raw) } catch { return [] }
+  }
+  if (!Array.isArray(raw)) return []
+  const out: AcpMediaItem[] = []
+  for (const m of raw) {
+    if (!m || typeof m !== 'object') continue
+    const url = String(m.url ?? m.URL ?? m.uri ?? m.Uri ?? '').trim()
+    if (!url || !SAFE_MEDIA_URL.test(url)) continue
+    const lower = url.toLowerCase()
+    if (lower.startsWith('data:') && lower.includes('svg') && lower.includes('script')) continue
+    const kind = String(m.kind ?? m.Kind ?? 'file').trim().toLowerCase() || 'file'
+    out.push({
+      kind,
+      url,
+      mimeType: String(m.mimeType ?? m.MimeType ?? '').trim() || undefined,
+      alt: String(m.alt ?? m.Alt ?? '').trim() || undefined,
+      name: String(m.name ?? m.Name ?? '').trim() || undefined,
+    })
+  }
+  return out
+}
+
+function mergeMedia(existing?: AcpMediaItem[], incoming?: AcpMediaItem[]): AcpMediaItem[] | undefined {
+  if (!incoming?.length) return existing
+  if (!existing?.length) return incoming.slice()
+  const seen = new Set(existing.map(m => m.kind + '\0' + m.url))
+  const out = existing.slice()
+  for (const m of incoming) {
+    const key = m.kind + '\0' + m.url
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(m)
+  }
+  return out
+}
+
 export const useAcpStore = defineStore('acp', () => {
   const tabs = ref<AcpTab[]>([])
   const activeTabId = ref<string | null>(null)
@@ -229,12 +281,13 @@ export const useAcpStore = defineStore('acp', () => {
     }
   }
 
-  function pushMessage(tab: AcpTab, role: AcpRole, content: string, streaming = false) {
-    if (!content) return
+  function pushMessage(tab: AcpTab, role: AcpRole, content: string, streaming = false, media?: AcpMediaItem[]) {
+    if (!content && !(media && media.length)) return
     if (role === 'assistant') {
       const last = tab.items[tab.items.length - 1]
       if (last && last.kind === 'message' && last.role === 'assistant' && last.streaming) {
-        last.content += content
+        if (content) last.content += content
+        last.media = mergeMedia(last.media, media)
         return
       }
       // Thought chunks finish before the answer; close any open thought bubble.
@@ -245,7 +298,8 @@ export const useAcpStore = defineStore('acp', () => {
         id: nextId('a'),
         kind: 'message',
         role: 'assistant',
-        content,
+        content: content || '',
+        media: media?.length ? media.slice() : undefined,
         streaming: true,
       })
       return
@@ -254,16 +308,18 @@ export const useAcpStore = defineStore('acp', () => {
       id: nextId(role === 'user' ? 'u' : 's'),
       kind: 'message',
       role,
-      content,
+      content: content || '',
+      media: media?.length ? media.slice() : undefined,
       streaming,
     })
   }
 
-  function pushThought(tab: AcpTab, content: string) {
-    if (!content) return
+  function pushThought(tab: AcpTab, content: string, media?: AcpMediaItem[]) {
+    if (!content && !(media && media.length)) return
     const last = tab.items[tab.items.length - 1]
     if (last && last.kind === 'thought' && last.streaming) {
-      last.content += content
+      if (content) last.content += content
+      last.media = mergeMedia(last.media, media)
       return
     }
     // Close any open assistant stream so following answer starts fresh.
@@ -271,7 +327,8 @@ export const useAcpStore = defineStore('acp', () => {
     tab.items.push({
       id: nextId('th'),
       kind: 'thought',
-      content,
+      content: content || '',
+      media: media?.length ? media.slice() : undefined,
       streaming: true,
       expanded: true,
     })
@@ -405,18 +462,26 @@ export const useAcpStore = defineStore('acp', () => {
       if (type === 'message') {
         const role = (readField(ev, 'role', 'Role') || 'assistant') as AcpRole
         const content = String(readField(ev, 'content', 'Content') || '')
-        if (!content) return
+        const media = normalizeMedia(ev?.media ?? ev?.Media)
+        if (!content && !media.length) return
         if (role === 'user') {
           // Backend also emits user message on Prompt; avoid double if already last.
           const last = tab.items[tab.items.length - 1]
-          if (last && last.kind === 'message' && last.role === 'user' && last.content === content) return
+          if (
+            last &&
+            last.kind === 'message' &&
+            last.role === 'user' &&
+            last.content === content &&
+            !media.length
+          ) return
         }
-        pushMessage(tab, role, content, role === 'assistant')
+        pushMessage(tab, role, content, role === 'assistant', media.length ? media : undefined)
         return
       }
       if (type === 'thought') {
         const content = String(readField(ev, 'content', 'Content') || '')
-        pushThought(tab, content)
+        const media = normalizeMedia(ev?.media ?? ev?.Media)
+        pushThought(tab, content, media.length ? media : undefined)
         return
       }
       if (type === 'usage') {

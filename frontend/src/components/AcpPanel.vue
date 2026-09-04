@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useAcpStore, type AcpCommand, type AcpPlanItem, type AcpTimelineItem } from '../stores/acp'
-import { renderMarkdown } from '../utils/renderMarkdown'
+import { useAcpStore, type AcpCommand, type AcpMediaItem, type AcpPlanItem, type AcpTimelineItem } from '../stores/acp'
+import { renderMarkdown, renderMermaidBlocks } from '../utils/renderMarkdown'
 
 const props = defineProps<{ sessionId: string }>()
 const store = useAcpStore()
@@ -99,14 +99,29 @@ watch(
     const t = tab.value
     if (!t) return ''
     return t.items.map(it => {
-      if (it.kind === 'message') return it.id + it.content.length + (it.streaming ? '1' : '0')
+      if (it.kind === 'message') {
+        const mediaLen = it.media?.length || 0
+        return it.id + it.content.length + ':' + mediaLen + (it.streaming ? '1' : '0')
+      }
       if (it.kind === 'thought') return it.id + it.content.length + (it.streaming ? '1' : '0') + (it.expanded === false ? '0' : '1')
       if (it.kind === 'plan') return it.id + it.entries.length + ':' + it.entries.map(e => e.status + e.content.length).join(',')
       return it.id + it.status + (it.output?.length || 0)
     }).join('|')
   },
-  () => { void scrollToBottom() },
+  async () => {
+    await scrollToBottom()
+    await nextTick()
+    if (listEl.value) {
+      try { await renderMermaidBlocks(listEl.value) } catch { /* ignore mermaid errors */ }
+    }
+  },
 )
+
+function isSafeMedia(m: AcpMediaItem | undefined | null): m is AcpMediaItem {
+  if (!m?.url) return false
+  const u = m.url.trim()
+  return /^(https?:|data:image\/|data:audio\/|data:video\/)/i.test(u)
+}
 
 function applyCommand(cmd: AcpCommand) {
   const lines = input.value.split('\n')
@@ -330,10 +345,79 @@ const timelineItems = computed(() => (tab.value?.items || []).filter(it => it.ki
           <div
             v-if="it.role === 'assistant'"
             class="acp-bubble md"
-            v-html="renderMarkdown(it.content)"
-          ></div>
+          >
+            <div v-if="it.content" class="acp-md-body" v-html="renderMarkdown(it.content)"></div>
+            <div v-if="it.media?.length" class="acp-media">
+              <template v-for="(m, mi) in it.media" :key="mi">
+                <a
+                  v-if="isSafeMedia(m) && m.kind === 'image'"
+                  class="acp-media-item image"
+                  :href="m.url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <img :src="m.url" :alt="m.alt || m.name || 'image'" loading="lazy" />
+                </a>
+                <video
+                  v-else-if="isSafeMedia(m) && m.kind === 'video'"
+                  class="acp-media-item video"
+                  :src="m.url"
+                  controls
+                  preload="metadata"
+                />
+                <audio
+                  v-else-if="isSafeMedia(m) && m.kind === 'audio'"
+                  class="acp-media-item audio"
+                  :src="m.url"
+                  controls
+                  preload="metadata"
+                />
+                <a
+                  v-else-if="isSafeMedia(m)"
+                  class="acp-media-item file"
+                  :href="m.url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >{{ m.name || m.alt || m.url }}</a>
+              </template>
+            </div>
+          </div>
           <div v-else-if="it.role === 'user'" class="acp-bubble user-bubble">
-            <div class="acp-user-text">{{ it.content }}</div>
+            <div v-if="it.content" class="acp-user-text">{{ it.content }}</div>
+            <div v-if="it.media?.length" class="acp-media">
+              <template v-for="(m, mi) in it.media" :key="mi">
+                <a
+                  v-if="isSafeMedia(m) && m.kind === 'image'"
+                  class="acp-media-item image"
+                  :href="m.url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <img :src="m.url" :alt="m.alt || m.name || 'image'" loading="lazy" />
+                </a>
+                <video
+                  v-else-if="isSafeMedia(m) && m.kind === 'video'"
+                  class="acp-media-item video"
+                  :src="m.url"
+                  controls
+                  preload="metadata"
+                />
+                <audio
+                  v-else-if="isSafeMedia(m) && m.kind === 'audio'"
+                  class="acp-media-item audio"
+                  :src="m.url"
+                  controls
+                  preload="metadata"
+                />
+                <a
+                  v-else-if="isSafeMedia(m)"
+                  class="acp-media-item file"
+                  :href="m.url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >{{ m.name || m.alt || m.url }}</a>
+              </template>
+            </div>
           </div>
           <div v-else class="acp-note">{{ it.content }}</div>
         </div>
@@ -684,38 +768,38 @@ const timelineItems = computed(() => (tab.value?.items || []).filter(it => it.ki
   border-radius: 12px 12px 12px 4px;
   box-shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 8px 20px rgba(0,0,0,.12);
 }
-.acp-msg.assistant .acp-bubble.md :deep(p),
-.acp-msg.assistant .acp-bubble.md :deep(li),
-.acp-msg.assistant .acp-bubble.md :deep(h1),
-.acp-msg.assistant .acp-bubble.md :deep(h2),
-.acp-msg.assistant .acp-bubble.md :deep(h3),
-.acp-msg.assistant .acp-bubble.md :deep(h4),
-.acp-msg.assistant .acp-bubble.md :deep(h5),
-.acp-msg.assistant .acp-bubble.md :deep(h6),
-.acp-msg.assistant .acp-bubble.md :deep(a),
-.acp-msg.assistant .acp-bubble.md :deep(th),
-.acp-msg.assistant .acp-bubble.md :deep(td),
-.acp-msg.assistant .acp-bubble.md :deep(blockquote) {
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(p),
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(li),
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(h1),
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(h2),
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(h3),
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(h4),
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(h5),
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(h6),
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(a),
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(th),
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(td),
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(blockquote) {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
-.acp-msg.assistant .acp-bubble.md :deep(> *:first-child) { margin-top: 0; }
-.acp-msg.assistant .acp-bubble.md :deep(> *:last-child) { margin-bottom: 0; }
-.acp-msg.assistant .acp-bubble.md :deep(p),
-.acp-msg.assistant .acp-bubble.md :deep(ul),
-.acp-msg.assistant .acp-bubble.md :deep(ol) { margin: 0 0 8px; }
-.acp-msg.assistant .acp-bubble.md :deep(ul),
-.acp-msg.assistant .acp-bubble.md :deep(ol) { padding-left: 1.35em; }
-.acp-msg.assistant .acp-bubble.md :deep(li) { margin: 2px 0; }
-.acp-msg.assistant .acp-bubble.md :deep(li > ul),
-.acp-msg.assistant .acp-bubble.md :deep(li > ol) { margin: 2px 0; }
-.acp-msg.assistant .acp-bubble.md :deep(blockquote) {
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(> *:first-child) { margin-top: 0; }
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(> *:last-child) { margin-bottom: 0; }
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(p),
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(ul),
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(ol) { margin: 0 0 8px; }
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(ul),
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(ol) { padding-left: 1.35em; }
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(li) { margin: 2px 0; }
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(li > ul),
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(li > ol) { margin: 2px 0; }
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(blockquote) {
   margin: 0 0 8px;
   padding: 4px 0 4px 10px;
   border-left: 3px solid rgba(139, 179, 232, .28);
   color: #9da7b3;
 }
-.acp-msg.assistant .acp-bubble.md :deep(pre) {
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(pre) {
   width: auto;
   max-width: 100%;
   box-sizing: border-box;
@@ -728,8 +812,8 @@ const timelineItems = computed(() => (tab.value?.items || []).filter(it => it.ki
   border-radius: 8px;
   background: rgba(1, 6, 14, .45);
 }
-.acp-msg.assistant .acp-bubble.md :deep(pre code),
-.acp-msg.assistant .acp-bubble.md :deep(pre code.hljs) {
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(pre code),
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(pre code.hljs) {
   display: block;
   width: auto;
   max-width: none;
@@ -739,25 +823,86 @@ const timelineItems = computed(() => (tab.value?.items || []).filter(it => it.ki
   overflow-wrap: inherit;
   word-break: inherit;
 }
-.acp-msg.assistant .acp-bubble.md :deep(code) {
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(code) {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
-.acp-msg.assistant .acp-bubble.md :deep(table) {
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(table) {
   display: block;
   width: max-content;
   max-width: 100%;
   overflow-x: auto;
   margin: 0 0 8px;
 }
-.acp-msg.assistant .acp-bubble.md :deep(img),
-.acp-msg.assistant .acp-bubble.md :deep(svg),
-.acp-msg.assistant .acp-bubble.md :deep(video) {
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(img),
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(svg),
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(video) {
   max-width: 100%;
   height: auto;
 }
 .acp-msg.assistant.streaming .acp-bubble.md {
   border-color: #238636;
+}
+
+.acp-md-body { min-width: 0; }
+.acp-media {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  min-width: 0;
+}
+.acp-md-body + .acp-media { margin-top: 10px; }
+.acp-user-text + .acp-media { margin-top: 10px; }
+.acp-media-item {
+  max-width: 100%;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.acp-media-item.image {
+  display: block;
+  line-height: 0;
+  border: 1px solid rgba(139, 179, 232, 0.22);
+  background: rgba(1, 6, 14, 0.35);
+}
+.acp-media-item.image img {
+  display: block;
+  max-width: 100%;
+  max-height: min(420px, 55vh);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  margin: 0 auto;
+}
+.acp-media-item.video {
+  display: block;
+  width: 100%;
+  max-height: min(420px, 55vh);
+  background: #010409;
+  border: 1px solid #30363d;
+}
+.acp-media-item.audio {
+  display: block;
+  width: 100%;
+}
+.acp-media-item.file {
+  display: inline-block;
+  font-size: 12px;
+  color: #79c0ff;
+  text-decoration: none;
+  word-break: break-all;
+  padding: 4px 0;
+}
+.acp-media-item.file:hover { text-decoration: underline; }
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(.mermaid-block),
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(.mermaid-diagram) {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0 0 8px;
+}
+.acp-msg.assistant .acp-bubble.md .acp-md-body :deep(.mermaid-diagram svg) {
+  max-width: 100%;
+  height: auto;
 }
 .acp-note {
   font-size: 12px;

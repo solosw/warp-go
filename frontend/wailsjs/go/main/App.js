@@ -86,6 +86,10 @@ export function GetFileDiff(arg1) {
   return window['go']['main']['App']['GetFileDiff'](arg1);
 }
 
+export function GetFilePreviewData(arg1) {
+  return window['go']['main']['App']['GetFilePreviewData'](arg1);
+}
+
 export function GetLSPStatus(arg1) {
   return window['go']['main']['App']['GetLSPStatus'](arg1);
 }

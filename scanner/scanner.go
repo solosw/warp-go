@@ -10,10 +10,12 @@ import (
 )
 
 // skipDirs are directories always skipped during scanning.
+// Dotfiles/dirs are shown; only VCS, common dependency trees, and
+// the app's own snapshot store are excluded.
 var skipDirs = map[string]bool{
-	".git": true, "node_modules": true, ".warp-snapshots": true,
-	"dist": true, "build": true, ".next": true, "__pycache__": true,
-	"target": true, ".cache": true, "vendor": true,
+	".git": true, ".svn": true,
+	"node_modules": true, "vendor": true, "__pycache__": true,
+	".warp-snapshots": true,
 }
 
 // ScanResult holds the result of a workspace scan.
@@ -45,7 +47,7 @@ func Scan(workspace string) (*ScanResult, error) {
 		}
 		relPath, _ := filepath.Rel(workspace, path)
 		if info.IsDir() {
-			if skipDirs[info.Name()] || strings.HasPrefix(info.Name(), ".") && info.Name() != ".gitignore" {
+			if skipDirs[info.Name()] {
 				return filepath.SkipDir
 			}
 			if relPath != "." && !ignore.Match(relPath) {

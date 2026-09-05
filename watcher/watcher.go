@@ -10,10 +10,12 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-// skipPrefixes are directory names to skip during watching.
+// skipPrefixes are directory/file names to skip during watching.
+// Mirrors scanner.skipDirs: show dot entries except VCS / deps / app store.
 var skipPrefixes = map[string]bool{
-	".git": true, "node_modules": true, ".warp-snapshots": true,
-	"dist": true, "build": true, "__pycache__": true,
+	".git": true, ".svn": true,
+	"node_modules": true, "vendor": true, "__pycache__": true,
+	".warp-snapshots": true,
 }
 
 // Callback is called when files change (debounced).
@@ -63,7 +65,7 @@ func (w *Watcher) addDirs(root string) error {
 		}
 		if info.IsDir() {
 			name := info.Name()
-			if skipPrefixes[name] || (strings.HasPrefix(name, ".") && name != "." && name != "..") {
+			if skipPrefixes[name] {
 				return filepath.SkipDir
 			}
 			return w.fsw.Add(path)
@@ -125,7 +127,7 @@ func (w *Watcher) loop() {
 func shouldSkip(relPath, absPath string) bool {
 	parts := strings.Split(filepath.ToSlash(relPath), "/")
 	for _, p := range parts {
-		if skipPrefixes[p] || (strings.HasPrefix(p, ".") && p != "..") {
+		if skipPrefixes[p] {
 			return true
 		}
 	}

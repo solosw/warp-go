@@ -96,3 +96,54 @@ func TestScanListsEmptyDirectories(t *testing.T) {
 		}
 	}
 }
+
+func TestScanShowsDotfilesButSkipsVCSAndDeps(t *testing.T) {
+	root := t.TempDir()
+
+	writeFile(t, root, ".env", []byte("A=1\n"))
+	writeFile(t, root, ".gitignore", []byte("ignored.txt\n"))
+	writeFile(t, root, ".github/workflows/ci.yml", []byte("name: ci\n"))
+	writeFile(t, root, ".vscode/settings.json", []byte("{}\n"))
+	writeFile(t, root, ".git/config", []byte("[core]\n"))
+	writeFile(t, root, ".svn/entries", []byte("12\n"))
+	writeFile(t, root, "node_modules/pkg/index.js", []byte("module.exports=1\n"))
+	writeFile(t, root, "vendor/lib.go", []byte("package lib\n"))
+	writeFile(t, root, "__pycache__/x.pyc", []byte{0x00})
+	writeFile(t, root, ".warp-snapshots/x", []byte("snap\n"))
+	writeFile(t, root, "ignored.txt", []byte("nope\n"))
+
+	res, err := Scan(root)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+
+	all := slices.Concat(res.Files, res.OtherFiles)
+	for _, want := range []string{
+		".env",
+		".gitignore",
+		filepath.FromSlash(".github/workflows/ci.yml"),
+		filepath.FromSlash(".vscode/settings.json"),
+	} {
+		if !slices.Contains(all, want) {
+			t.Errorf("dot entry %q should be listed; got files=%v others=%v", want, res.Files, res.OtherFiles)
+		}
+	}
+	for _, wantDir := range []string{".github", ".github/workflows", ".vscode"} {
+		if !slices.Contains(res.Directories, wantDir) {
+			t.Errorf("directories %v do not include %q", res.Directories, wantDir)
+		}
+	}
+	for _, unwanted := range []string{
+		filepath.FromSlash(".git/config"),
+		filepath.FromSlash(".svn/entries"),
+		filepath.FromSlash("node_modules/pkg/index.js"),
+		filepath.FromSlash("vendor/lib.go"),
+		filepath.FromSlash("__pycache__/x.pyc"),
+		filepath.FromSlash(".warp-snapshots/x"),
+		"ignored.txt",
+	} {
+		if slices.Contains(all, unwanted) {
+			t.Errorf("%q should be skipped; got %v", unwanted, all)
+		}
+	}
+}

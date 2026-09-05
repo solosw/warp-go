@@ -69,25 +69,23 @@ func entriesToFingerprints(entries []remoteFileEntry) map[string]string {
 }
 
 // Remote file filters — mirrors scanner/scanner.go logic.
+// Dotfiles/dirs are shown; only VCS, common dependency trees, and
+// the app's own snapshot store are excluded.
 var remoteSkipDirs = map[string]bool{
-	".git": true, "node_modules": true, ".warp-snapshots": true,
-	"dist": true, "build": true, ".next": true, "__pycache__": true,
-	"target": true, ".cache": true, "vendor": true, ".yarn": true,
-	".pnpm-store": true, "bower_components": true, ".turbo": true,
-	".nuxt": true, ".output": true, "coverage": true, ".nyc_output": true,
+	".git": true, ".svn": true,
+	"node_modules": true, "vendor": true, "__pycache__": true,
+	".warp-snapshots": true,
 }
 
 // isRemoteHidden reports whether a remote entry is structural noise: a skipped
-// directory, a dotfile, or a .gitignore match. It says nothing about content type.
+// directory/path segment, or a .gitignore match. It says nothing about content type.
 func (a *App) isRemoteHidden(relPath string, isDir bool) bool {
-	name := path.Base(relPath)
-	if isDir {
-		if remoteSkipDirs[name] || (strings.HasPrefix(name, ".") && name != ".gitignore") {
-			return true
-		}
-	}
+	_ = isDir
 	for _, seg := range strings.Split(relPath, "/") {
-		if remoteSkipDirs[seg] || (strings.HasPrefix(seg, ".") && seg != ".." && seg != "." && seg != ".gitignore") {
+		if seg == "." || seg == ".." || seg == "" {
+			continue
+		}
+		if remoteSkipDirs[seg] {
 			return true
 		}
 	}
